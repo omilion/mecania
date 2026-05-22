@@ -378,7 +378,7 @@ function App() {
         </header>
 
         {section === 'dashboard' && (
-          <Dashboard orders={orders} currentUser={currentUser} openJob={openJob} setSection={setSection} openJobsFilter={openJobsFilter} />
+          <Dashboard orders={orders} currentUser={currentUser} openJob={openJob} setSection={setSection} openJobsFilter={openJobsFilter} addOrder={addOrder} />
         )}
         {section === 'jobs' && (
           <Jobs
@@ -546,20 +546,25 @@ function normalizeAuthUser(user = {}) {
   };
 }
 
-function Dashboard({ orders, currentUser, openJob, setSection, openJobsFilter }) {
+function Dashboard({ orders, currentUser, openJob, setSection, openJobsFilter, addOrder }) {
   const waiting = orders.filter((order) => order.status === 'waiting_parts').length;
   const ready = orders.filter((order) => order.status !== 'closed' && executionGate(order).ok).length;
   const quotes = orders.filter((order) => order.status === 'quote_draft' || order.status === 'quote_sent').length;
   const open = orders.filter((order) => order.status !== 'closed').length;
   const myOrders = orders.filter((order) => isOrderRelevantForUser(order, currentUser));
   const myPending = pendingItemsForUser(orders, currentUser);
-  const unassigned = orders.filter((order) => order.status !== 'closed' && !getOrderAssignments(order).responsible).length;
+  const unassigned = orders.filter(hasAssignmentGap).length;
   const recentOrders = [...orders].sort((a, b) => new Date(b.updatedAt || b.createdAt) - new Date(a.updatedAt || a.createdAt));
 
   return (
     <div className="view-grid">
+      <button className="summary-card visit-cta clickable" type="button" onClick={addOrder}>
+        <Plus size={22} />
+        <span>Atencion inmediata</span>
+        <strong>Primera visita</strong>
+      </button>
       <SummaryCard label="Mis pendientes" value={myPending.length} icon={ClipboardCheck} tone="blue" onClick={() => openJobsFilter('mine')} />
-      <SummaryCard label="Sin responsable" value={unassigned} icon={User} tone="amber" onClick={() => openJobsFilter('unassigned')} />
+      <SummaryCard label="Sin equipo" value={unassigned} icon={User} tone="amber" onClick={() => openJobsFilter('unassigned')} />
       <SummaryCard label={currentUser.role === 'mechanic' ? 'Listas para ejecutar' : 'Cotizaciones activas'} value={currentUser.role === 'mechanic' ? ready : quotes} icon={currentUser.role === 'mechanic' ? Wrench : FileText} tone="violet" onClick={() => openJobsFilter(currentUser.role === 'mechanic' ? 'ready' : 'quote')} />
       <SummaryCard label={currentUser.role === 'admin' ? 'Trabajos abiertos' : 'Mis ordenes'} value={currentUser.role === 'admin' ? open : myOrders.length} icon={Check} tone="green" onClick={() => openJobsFilter(currentUser.role === 'admin' ? 'active' : 'mine')} />
       <section className="panel wide role-dashboard">
@@ -639,7 +644,7 @@ function Jobs({ orders, activeOrder, currentUser, users, openJob, jobStep, setJo
   const filterCounts = {
     active: orders.filter((order) => order.status !== 'closed').length,
     mine: orders.filter((order) => isOrderRelevantForUser(order, currentUser)).length,
-    unassigned: orders.filter((order) => order.status !== 'closed' && !getOrderAssignments(order).responsible).length,
+    unassigned: orders.filter(hasAssignmentGap).length,
     waiting_parts: orders.filter((order) => order.status === 'waiting_parts').length,
     quote: orders.filter((order) => order.status === 'quote_draft' || order.status === 'quote_sent').length,
     ready: orders.filter((order) => order.status !== 'closed' && executionGate(order).ok).length,
@@ -650,7 +655,7 @@ function Jobs({ orders, activeOrder, currentUser, users, openJob, jobStep, setJo
   const filteredOrders = orders.filter((order) => {
     if (statusFilter === 'all') return true;
     if (statusFilter === 'mine') return isOrderRelevantForUser(order, currentUser);
-    if (statusFilter === 'unassigned') return order.status !== 'closed' && !getOrderAssignments(order).responsible;
+    if (statusFilter === 'unassigned') return hasAssignmentGap(order);
     if (statusFilter === 'closed') return order.status === 'closed';
     if (statusFilter === 'waiting_parts') return order.status === 'waiting_parts';
     if (statusFilter === 'quote') return order.status === 'quote_draft' || order.status === 'quote_sent';
@@ -723,7 +728,7 @@ function Jobs({ orders, activeOrder, currentUser, users, openJob, jobStep, setJo
             {[
               ['active', 'Activos'],
               ['mine', 'Mis ordenes'],
-              ['unassigned', 'Sin responsable'],
+              ['unassigned', 'Sin equipo'],
               ['waiting_parts', 'Repuestos'],
               ['quote', 'Cotizaciones'],
               ['ready', 'Listos'],
@@ -765,14 +770,20 @@ function FirstVisitPage({ order, jobStep, setJobStep, updateOrder, currentUser, 
         </div>
         <button className="secondary-button" onClick={onExit}>Guardar y salir</button>
       </div>
-      <AssignmentPanel order={order} users={users} currentUser={currentUser} updateOrder={updateOrder} />
       <WorkflowProgress step={jobStep} order={order} />
-      <WorkflowStepper step={jobStep} setStep={setJobStep} order={order} />
-      <WorkflowNav step={jobStep} setStep={setJobStep} order={order} />
       {storageError && <InlineAlert tone="red" title="Guardado local con riesgo" body={storageError} />}
       <div className="wizard-surface">
         <WizardStep step={jobStep} order={order} updateOrder={updateOrder} setJobStep={setJobStep} currentUser={currentUser} />
       </div>
+      <details className="assignment-disclosure">
+        <summary>
+          <User size={16} />
+          <span>Revisar equipo asignado</span>
+          <AssigneeLine order={order} compact />
+        </summary>
+        <AssignmentPanel order={order} users={users} currentUser={currentUser} updateOrder={updateOrder} />
+      </details>
+      <WorkflowNav step={jobStep} setStep={setJobStep} order={order} />
     </section>
   );
 }
@@ -982,14 +993,11 @@ function AssigneeLine({ order, compact = false }) {
 function WorkflowProgress({ step, order }) {
   const index = workflowSteps.findIndex((item) => item.id === step);
   const current = workflowSteps[index] || workflowSteps[0];
-  const completed = workflowSteps.filter((item) => stepComplete(order, item.id)).length;
   const percent = Math.round(((index + 1) / workflowSteps.length) * 100);
   return (
     <div className="workflow-progress" aria-label={`Paso ${index + 1} de ${workflowSteps.length}: ${current.label}`}>
       <div>
-        <span>Paso {index + 1} de {workflowSteps.length}</span>
-        <strong>{current.label}</strong>
-        <small>{completed} pasos completos</small>
+        <strong>Paso {index + 1} de {workflowSteps.length}</strong>
       </div>
       <div className="progress-track" aria-hidden="true">
         <span style={{ width: `${percent}%` }} />
@@ -1023,14 +1031,8 @@ function WorkflowNav({ step, setStep, order }) {
   const index = workflowSteps.findIndex((item) => item.id === step);
   const previous = workflowSteps[index - 1];
   const next = workflowSteps[index + 1];
-  const current = workflowSteps[index];
-  const complete = stepComplete(order, step);
   return (
     <div className="workflow-nav">
-      <div>
-        <strong>{current?.label || 'Paso'}</strong>
-        <span>{complete ? 'Paso completo' : missingStepHint(order, step)}</span>
-      </div>
       <div className="button-row no-margin">
         <button className="secondary-button" disabled={!previous} onClick={() => previous && setStep(previous.id)}>
           Anterior
@@ -1200,6 +1202,12 @@ function getOrderAssignments(order) {
   };
 }
 
+function hasAssignmentGap(order) {
+  if (order.status === 'closed') return false;
+  const assignments = getOrderAssignments(order);
+  return !assignments.responsible || !assignments.coordinator || !assignments.mechanic;
+}
+
 function userName(userId) {
   return workshopUsers.find((user) => user.id === userId)?.name || 'Sin asignar';
 }
@@ -1235,7 +1243,7 @@ function pendingPriority(item, user) {
   if (action === 'No encender motor') return 0;
   if (user.role === 'mechanic' && ['Registrar revision', 'Completar vehiculo'].includes(action)) return 0;
   if (user.role === 'coordinator' && ['Resolver repuestos', 'Esperar aprobacion'].includes(action)) return 0;
-  if (user.role === 'admin' && !getOrderAssignments(item.order).responsible) return 0;
+  if (['admin', 'coordinator'].includes(user.role) && hasAssignmentGap(item.order)) return 0;
   return prepScore(item.order).state === 'red' ? 1 : 2;
 }
 

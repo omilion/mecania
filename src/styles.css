@@ -397,6 +397,21 @@ label {
   background: var(--violet-bg);
 }
 
+.visit-cta {
+  align-content: center;
+  background: var(--primary);
+  color: #fff;
+}
+
+.visit-cta span,
+.visit-cta strong {
+  color: #fff;
+}
+
+.visit-cta svg {
+  color: #fff;
+}
+
 .role-dashboard {
   background: #fff;
 }
@@ -679,7 +694,10 @@ button:disabled {
 }
 
 .first-visit-page {
+  display: grid;
+  gap: 12px;
   min-height: calc(100vh - 48px);
+  padding-bottom: 86px;
 }
 
 .first-visit-topbar {
@@ -837,6 +855,39 @@ button:disabled {
   gap: 16px;
 }
 
+.assignment-disclosure {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.assignment-disclosure > summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 0 12px;
+  color: var(--text);
+  cursor: pointer;
+  list-style: none;
+}
+
+.assignment-disclosure > summary::-webkit-details-marker {
+  display: none;
+}
+
+.assignment-disclosure > summary > span {
+  font-weight: 850;
+}
+
+.assignment-disclosure .assignment-panel {
+  border: 0;
+  border-top: 1px solid var(--line);
+  border-radius: 0;
+  box-shadow: none;
+}
+
 .assignment-panel p {
   margin-bottom: 0;
   color: var(--muted);
@@ -888,7 +939,7 @@ button:disabled {
 }
 
 .workflow-progress {
-  display: none;
+  display: grid;
   gap: 10px;
   padding: 14px;
   border: 1px solid var(--line);
@@ -907,8 +958,7 @@ button:disabled {
 
 .workflow-progress strong {
   display: block;
-  margin-top: 3px;
-  font-size: 19px;
+  font-size: 18px;
 }
 
 .progress-track {
@@ -952,15 +1002,28 @@ button:disabled {
 }
 
 .workflow-nav {
+  position: fixed;
+  right: 24px;
+  bottom: 18px;
+  z-index: 40;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 14px;
-  padding: 12px 14px;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: 10px;
   background: #fff;
   box-shadow: var(--shadow);
+}
+
+.workflow-nav .button-row {
+  gap: 8px;
+}
+
+.workflow-nav button {
+  min-height: 34px;
+  padding: 0 12px;
 }
 
 .workflow-nav strong,
