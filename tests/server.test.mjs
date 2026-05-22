@@ -596,3 +596,62 @@ test('AI endpoint uses local fallback when GEMINI_API_KEY is missing', async () 
     assert.match(result.json.text, /Compatibilidad/);
   });
 });
+
+test('AI endpoint uses local fallback for part sheets when GEMINI_API_KEY is missing', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const authHeaders = await login(baseUrl);
+    const result = await request(baseUrl, '/api/ai/generate', {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        task: 'part_sheet',
+        order: {
+          number: 'MO-TEST',
+          vehicle: { brand: 'Chevrolet', model: 'Sail', year: '2016', engine: '1.4', plate: 'AB-CD-12' },
+          parts: [{ id: 'p1', name: 'Termostato', status: 'pending' }],
+        },
+        context: { part: { id: 'p1', name: 'Termostato' } },
+      }),
+    });
+
+    assert.equal(result.response.status, 200);
+    assert.equal(result.json.fallback, true);
+    assert.match(result.json.text, /FICHA DE COTIZACION/);
+    assert.match(result.json.text, /Termostato/);
+  });
+});
+
+test('AI endpoint builds part sheet prompts with target part context', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const authHeaders = await login(baseUrl);
+    const result = await request(baseUrl, '/api/ai/generate', {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        task: 'part_sheet',
+        order: {
+          number: 'MO-TEST',
+          vehicle: { brand: 'Chevrolet', model: 'Sail', year: '2016', engine: '1.4', plate: 'AB-CD-12' },
+          parts: [{ id: 'p1', name: 'Termostato', status: 'pending' }],
+        },
+        context: { part: { id: 'p1', name: 'Termostato', notes: 'Cliente pide ficha' } },
+      }),
+    });
+
+    assert.equal(result.response.status, 200);
+    assert.equal(result.json.text, 'ficha remota');
+  }, {
+    env: { GEMINI_API_KEY: 'test-key' },
+    fetchImpl: async (url, options) => {
+      assert.match(url, /key=test-key$/);
+      const body = JSON.parse(options.body);
+      const prompt = body.contents[0].parts[0].text;
+      assert.match(prompt, /partes|repuestos|repuesto/i);
+      assert.match(prompt, /Termostato/);
+      assert.match(prompt, /MO-TEST/);
+      return Response.json({
+        candidates: [{ content: { parts: [{ text: 'ficha remota' }] } }],
+      });
+    },
+  });
+});

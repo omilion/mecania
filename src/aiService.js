@@ -2,6 +2,7 @@ import {
   generateDeliverySummary,
   generateInspection,
   generateIntake,
+  generatePartIdentificationSheet,
   generatePartsMessage,
   generateQuoteMessage,
   vehicleSpec,
@@ -28,20 +29,21 @@ export function aiConfigStatus() {
   return { ok: true, reason: 'Gemini configurado.', model: GEMINI_MODEL };
 }
 
-export function localAi(task, order) {
+export function localAi(task, order, context = {}) {
   const local = {
     intake: generateIntake,
     inspection: generateInspection,
     quote: generateQuoteMessage,
     parts: generatePartsMessage,
+    part_sheet: (sourceOrder) => generatePartIdentificationSheet(sourceOrder, context.part),
     handoff: generateDeliverySummary,
   }[task];
   return local ? local(order) : generateInspection(order);
 }
 
-export async function generateAiText(task, order) {
+export async function generateAiText(task, order, context = {}) {
   const status = aiConfigStatus();
-  if (!status.ok) return localAi(task, order);
+  if (!status.ok) return localAi(task, order, context);
 
   const response = await fetch(
     geminiUrl(GEMINI_API_KEY, GEMINI_MODEL),
@@ -52,13 +54,13 @@ export async function generateAiText(task, order) {
         contents: [
           {
             role: 'user',
-            parts: [{ text: buildPrompt(task, order) }],
+            parts: [{ text: buildPrompt(task, order, context) }],
           },
         ],
         generationConfig: {
           temperature: 0.2,
           topP: 0.8,
-          maxOutputTokens: 1200,
+          maxOutputTokens: task === 'part_sheet' ? 2200 : 1200,
         },
       }),
     },
@@ -81,7 +83,8 @@ export function geminiUrl(apiKey, model = GEMINI_MODEL) {
   return `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
 }
 
-function buildPrompt(task, order) {
+function buildPrompt(task, order, context = {}) {
+  if (task === 'part_sheet') return buildPartSheetPrompt(order, context.part);
   return [
     'Eres un asistente operativo para mecánicos. No reemplazas al mecánico; ordenas información, sugieres checklist, y redactas mensajes claros.',
     'Usa español chileno neutro, directo y profesional.',
@@ -94,5 +97,34 @@ function buildPrompt(task, order) {
     `Repuestos: ${order.parts?.map((part) => `${part.name}: ${part.status}, ${part.notes || 'sin notas'}`).join(' | ') || 'sin repuestos'}.`,
     `Cotización total: ${order.quote ? JSON.stringify(order.quote) : 'sin cotización'}.`,
     'Devuelve solo el texto final útil para el mecánico/cliente. No inventes datos técnicos específicos si no están disponibles.',
+  ].join('\n');
+}
+
+function buildPartSheetPrompt(order, part = {}) {
+  return [
+    'Eres un especialista tecnico en identificacion de repuestos automotrices.',
+    'Objetivo: generar una ficha de cotizacion en texto plano para comprar el repuesto correcto sin desarmar el vehiculo.',
+    'Reglas estrictas:',
+    '- Usa primero los datos estructurados del software.',
+    '- No inventes codigos OEM, equivalencias, medidas, presiones, temperaturas, voltajes ni resistencias.',
+    '- Si un dato no esta en el software o no estas seguro, escribe NO CONFIRMADO.',
+    '- Advierte sobre gemelos visuales y parametros internos cuando el tipo de pieza lo requiera.',
+    '- El VIN/codigo OEM/catalogo oficial manda sobre cualquier inferencia.',
+    '- Devuelve solo la ficha final en texto plano, sin markdown.',
+    '',
+    `Vehiculo: ${vehicleSpec(order)}.`,
+    `Orden JSON: ${JSON.stringify(order)}`,
+    `Repuesto objetivo JSON: ${JSON.stringify(part || {})}`,
+    '',
+    'Formato obligatorio:',
+    'FICHA DE COTIZACION - REPUESTO AUTOMOTRIZ',
+    '1. IDENTIFICACION DEL VEHICULO',
+    '2. REPUESTO SOLICITADO',
+    '3. NIVEL DE CONFIANZA Y FALTANTES',
+    '4. CODIGOS DE EQUIVALENCIA DIRECTA',
+    '5. PARAMETROS CRITICOS',
+    '6. MEDIDAS FISICAS PARA MOSTRADOR',
+    '7. VEHICULOS HERMANOS / BUSQUEDA ALTERNATIVA',
+    '8. ADVERTENCIAS Y VALIDACION FINAL',
   ].join('\n');
 }

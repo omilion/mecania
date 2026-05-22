@@ -20,6 +20,16 @@ test('local AI fallback preserves workflow text when Gemini is not configured', 
   assert.match(localAi('quote', order), /Datos para compatibilidad/);
 });
 
+test('local AI can generate part identification sheets without confirmed dimensions', () => {
+  const order = seedOrder();
+  const part = order.parts[0];
+  const text = localAi('part_sheet', order, { part });
+
+  assert.match(text, /FICHA DE COTIZACION/);
+  assert.match(text, /Bomba de agua/);
+  assert.match(text, /NO CONFIRMADO/);
+});
+
 test('geminiUrl only builds URLs for gemini-3-flash-preview', () => {
   const url = geminiUrl('test-key', 'gemini-3-flash-preview');
   assert.match(url, /models\/gemini-3-flash-preview:generateContent/);

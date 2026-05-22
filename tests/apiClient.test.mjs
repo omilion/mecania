@@ -290,6 +290,23 @@ test('generateAiRemote falls back to local AI text', async () => {
   assert.match(result.text, /Datos para compatibilidad/);
 });
 
+test('generateAiRemote sends part context to the API', async () => {
+  const order = seedOrder();
+  const part = order.parts[0];
+  const result = await generateAiRemote('part_sheet', order, {
+    context: { part },
+    fetch: async (url, options) => {
+      assert.match(url, /\/api\/ai\/generate$/);
+      const body = JSON.parse(options.body);
+      assert.equal(body.task, 'part_sheet');
+      assert.equal(body.context.part.name, part.name);
+      return jsonResponse({ text: 'ficha remota' });
+    },
+  });
+
+  assert.equal(result.text, 'ficha remota');
+});
+
 test('remote API errors can be surfaced when throwOnApiError is enabled', async () => {
   await assert.rejects(
     () => loadOrdersState({

@@ -10,6 +10,7 @@ import {
   ClipboardCheck,
   Clock,
   Copy,
+  Download,
   FileText,
   Gauge,
   MessageCircle,
@@ -25,6 +26,7 @@ import {
   Wrench,
 } from 'lucide-react';
 import './styles.css';
+import { downloadPlainTextPdf } from './pdfExport.js';
 import {
   clearAuthToken,
   createOrder as createRemoteOrder,
@@ -1345,9 +1347,29 @@ function mergeQuoteItems(existingItems = [], incomingNames = []) {
   });
 }
 
-async function generateWorkflowAi(task, order) {
-  const result = await generateAiRemote(task, order);
+async function generateWorkflowAi(task, order, context = {}) {
+  const result = await generateAiRemote(task, order, { context });
   return result?.text || String(result || '');
+}
+
+function partSheetFilename(order = {}, part = {}) {
+  const base = [
+    order.number || 'orden',
+    order.vehicle?.brand,
+    order.vehicle?.model,
+    order.vehicle?.year,
+    part.name || 'repuesto',
+  ].filter(Boolean).join('-');
+  return `${slug(base)}.pdf`;
+}
+
+function slug(value = '') {
+  return String(value || 'ficha')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .toLowerCase() || 'ficha';
 }
 
 function readPhotoFile(file, onSuccess, onError, uploadMeta = {}) {
@@ -1391,6 +1413,7 @@ function uploadedPhotoRecord(type, dataUrl, uploaded = {}) {
 function Intake({ order, updateOrder }) {
   const recognitionRef = useRef(null);
   const dictationBaseRef = useRef('');
+  const dictationResultsRef = useRef(new Map());
   const [listening, setListening] = useState(false);
   const [voiceError, setVoiceError] = useState('');
   const vehicleHints = extractVehicleHints(order.intakeText);
@@ -1413,9 +1436,11 @@ function Intake({ order, updateOrder }) {
     }
     const recognition = new SpeechRecognition();
     dictationBaseRef.current = order.intakeText || '';
+    dictationResultsRef.current = new Map();
     recognition.lang = 'es-CL';
     recognition.continuous = true;
-    recognition.interimResults = true;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
     recognition.onstart = () => {
       setVoiceError('');
       setListening(true);
@@ -1430,11 +1455,19 @@ function Intake({ order, updateOrder }) {
       recognitionRef.current = null;
     };
     recognition.onresult = (event) => {
-      const dictated = Array.from(event.results)
-        .map((result) => result[0]?.transcript || '')
-        .join(' ')
-        .replace(/\s+/g, ' ')
-        .trim();
+      const resultMap = new Map(dictationResultsRef.current);
+      for (let index = event.resultIndex; index < event.results.length; index += 1) {
+        const result = event.results[index];
+        if (!result?.isFinal) continue;
+        const segment = cleanDictationSegment(result[0]?.transcript || '');
+        if (segment) resultMap.set(index, segment);
+      }
+      dictationResultsRef.current = resultMap;
+      const dictated = compactDictationSegments(
+        [...resultMap.keys()]
+          .sort((a, b) => a - b)
+          .map((index) => resultMap.get(index)),
+      );
       if (!dictated) return;
       updateOrder((current) => ({
         ...current,
@@ -1518,6 +1551,34 @@ function mergeDictation(base = '', dictated = '') {
   const cleanDictated = String(dictated || '').trim();
   if (!cleanDictated) return cleanBase;
   return cleanBase ? `${cleanBase}\n${cleanDictated}` : cleanDictated;
+}
+
+function cleanDictationSegment(value = '') {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function compactDictationSegments(segments = []) {
+  const cleanSegments = segments.map(cleanDictationSegment).filter(Boolean);
+  const compacted = [];
+  for (const segment of cleanSegments) {
+    const current = normalizeDictationSegment(segment);
+    const previous = normalizeDictationSegment(compacted[compacted.length - 1] || '');
+    if (!current || current === previous) continue;
+    if (previous && current.startsWith(`${previous} `)) {
+      compacted[compacted.length - 1] = segment;
+      continue;
+    }
+    if (previous && previous.startsWith(`${current} `)) continue;
+    compacted.push(segment);
+  }
+  return compacted.join(' ').trim();
+}
+
+function normalizeDictationSegment(value = '') {
+  return cleanDictationSegment(value)
+    .toLocaleLowerCase('es-CL')
+    .replace(/[.,;:!?¿¡]+$/g, '')
+    .trim();
 }
 
 function voiceRecognitionError(error = '') {
@@ -2383,11 +2444,13 @@ function Quote({ order, updateOrder }) {
 
 function Parts({ order, updateOrder }) {
   const [photoError, setPhotoError] = useState('');
+  const [sheetError, setSheetError] = useState('');
+  const [generatingPartId, setGeneratingPartId] = useState('');
   const addPart = () => {
     updateOrder((current) => ({
       ...current,
       status: 'waiting_parts',
-      parts: [...current.parts, { id: crypto.randomUUID(), name: '', owner: 'client', status: 'pending', dueDate: '', notes: '', price: '', photoDataUrl: '', validatedBy: '' }],
+      parts: [...current.parts, { id: crypto.randomUUID(), name: '', owner: 'client', status: 'pending', dueDate: '', notes: '', price: '', photoDataUrl: '', validatedBy: '', identificationSheet: '', identificationSheetGeneratedAt: '' }],
     }));
   };
   const updatePart = (id, key, value) => {
@@ -2398,6 +2461,44 @@ function Parts({ order, updateOrder }) {
   };
   const addPartPhoto = (id, file) => {
     readPhotoFile(file, (dataUrl) => updatePart(id, 'photoDataUrl', dataUrl), setPhotoError, { type: 'Foto repuesto', orderId: order.id, target: 'parts' });
+  };
+  const generatePartSheet = async (part) => {
+    if (!part.name) {
+      setSheetError('Ingresa el nombre del repuesto antes de generar la ficha.');
+      return;
+    }
+    setSheetError('');
+    setGeneratingPartId(part.id);
+    updatePart(part.id, 'identificationSheet', 'Generando ficha tecnica con IA...');
+    try {
+      const text = await generateWorkflowAi('part_sheet', order, { part });
+      updateOrder((current) => ({
+        ...current,
+        parts: current.parts.map((item) => (item.id === part.id ? {
+          ...item,
+          identificationSheet: text,
+          identificationSheetGeneratedAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        } : item)),
+      }));
+    } catch (error) {
+      setSheetError(`No se pudo generar la ficha: ${error.message}`);
+      updatePart(part.id, 'identificationSheet', '');
+    } finally {
+      setGeneratingPartId('');
+    }
+  };
+  const downloadPartSheet = (part) => {
+    if (!part.identificationSheet) {
+      setSheetError('Primero genera o escribe una ficha para descargar.');
+      return;
+    }
+    setSheetError('');
+    downloadPlainTextPdf({
+      title: `Ficha repuesto - ${part.name || 'Repuesto'}`,
+      filename: partSheetFilename(order, part),
+      text: part.identificationSheet,
+    });
   };
   const generate = async () => {
     updateOrder((current) => ({
@@ -2428,6 +2529,7 @@ function Parts({ order, updateOrder }) {
           <span>{score.detail}</span>
         </div>
         {photoError && <InlineAlert tone="red" title="Foto no cargada" body={photoError} />}
+        {sheetError && <InlineAlert tone="red" title="Ficha tecnica" body={sheetError} />}
         <div className="stack">
           {order.parts.map((part) => (
             <div className="subcard" key={part.id}>
@@ -2470,6 +2572,27 @@ function Parts({ order, updateOrder }) {
                   }}
                 />
               )}
+              <div className="part-sheet-box">
+                <Textarea
+                  label="Ficha tecnica para cotizar"
+                  value={part.identificationSheet || ''}
+                  onChange={(value) => updatePart(part.id, 'identificationSheet', value)}
+                  placeholder="Genera una ficha IA o escribe aqui codigos, medidas y advertencias confirmadas."
+                />
+                {part.identificationSheetGeneratedAt && (
+                  <small>Generada: {new Date(part.identificationSheetGeneratedAt).toLocaleString('es-CL')}</small>
+                )}
+                <div className="button-row">
+                  <button className="ai-button" type="button" onClick={() => generatePartSheet(part)} disabled={generatingPartId === part.id || !part.name}>
+                    <Bot size={18} />
+                    {generatingPartId === part.id ? 'Generando ficha...' : 'Generar ficha IA'}
+                  </button>
+                  <button className="secondary-button" type="button" onClick={() => downloadPartSheet(part)} disabled={!part.identificationSheet || generatingPartId === part.id}>
+                    <Download size={17} />
+                    Descargar PDF
+                  </button>
+                </div>
+              </div>
             </div>
           ))}
           {!order.parts.length && (

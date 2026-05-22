@@ -1083,6 +1083,58 @@ export function generatePartsMessage(order) {
   ].join('\n');
 }
 
+export function generatePartIdentificationSheet(order, targetPart = {}) {
+  const part = targetPartForSheet(order, targetPart);
+  const vehicle = order.vehicle || {};
+  const missingVehicle = [
+    !vehicle.brand && 'marca',
+    !vehicle.model && 'modelo',
+    !vehicle.year && 'ano',
+    !vehicle.engine && 'motor/cilindrada',
+    !vehicle.plate && 'patente',
+  ].filter(Boolean);
+  const confidence = missingVehicle.length || !part.name ? 'BAJA' : vehicle.engineLabel || vehicle.fuel || vehicle.transmission ? 'MEDIA' : 'MEDIA-BAJA';
+  return [
+    'FICHA DE COTIZACION - REPUESTO AUTOMOTRIZ',
+    `Orden: ${order.number || 'sin numero'}`,
+    `Fecha ficha: ${new Date().toLocaleDateString('es-CL')}`,
+    '',
+    '1. IDENTIFICACION DEL VEHICULO',
+    `Vehiculo: ${vehicleName(order)}`,
+    `Datos tecnicos desde software: ${vehicleSpec(order)}.`,
+    vehicle.engineLabel ? `Motor catalogado: ${vehicle.engineLabel}` : 'Motor catalogado: no registrado.',
+    vehicle.mileage ? `Kilometraje: ${vehicle.mileage}` : 'Kilometraje: no registrado.',
+    '',
+    '2. REPUESTO SOLICITADO',
+    `Nombre: ${part.name || 'no especificado'}`,
+    `Responsable compra: ${partOwnerLabel(part.owner)}`,
+    `Estado actual: ${partStatuses[part.status] || part.status || 'Pendiente'}`,
+    part.price ? `Precio registrado: ${part.price}` : 'Precio registrado: no informado.',
+    part.dueDate ? `Fecha/llegada: ${part.dueDate}` : 'Fecha/llegada: no informada.',
+    part.notes ? `Notas del taller/cliente: ${part.notes}` : 'Notas del taller/cliente: sin notas.',
+    part.validatedBy ? `Validado por: ${part.validatedBy}` : 'Validado por: pendiente.',
+    '',
+    '3. NIVEL DE CONFIANZA',
+    `Nivel: ${confidence}`,
+    missingVehicle.length ? `Faltantes antes de comprar: ${missingVehicle.join(', ')}.` : 'Datos base completos para una primera busqueda.',
+    'La ficha no reemplaza validacion con VIN, catalogo oficial, codigo OEM o muestra cuando aplique.',
+    '',
+    '4. PARAMETROS CRITICOS',
+    'Codigos OEM/equivalencias: NO CONFIRMADO en el software.',
+    'Medidas fisicas en mm: NO CONFIRMADO en el software.',
+    'Parametros internos (temperatura, presion, voltaje, resistencia): NO CONFIRMADO salvo que aparezcan en notas.',
+    'Conectores, sellos o empaquetaduras: validar con catalogo/foto antes de comprar.',
+    '',
+    '5. ADVERTENCIAS PARA MOSTRADOR',
+    'No aceptar pieza solo por forma visual si falta codigo, motor exacto o parametro interno.',
+    'Preguntar por compatibilidad usando marca, modelo, ano, motor/cilindrada, combustible y patente.',
+    'Si el vendedor exige muestra, pedir busqueda por VIN/codigo OEM y confirmar medidas antes de pagar.',
+    '',
+    '6. TEXTO CORTO PARA PEDIR EN TIENDA',
+    `Necesito cotizar ${part.name || 'este repuesto'} para ${vehicleName(order)}. Datos: ${vehicleSpec(order)}. Validar codigo OEM/equivalente, medidas y parametros internos antes de vender.`,
+  ].join('\n');
+}
+
 export function generateDeliverySummary(order) {
   return [
     `Trabajo finalizado para ${vehicleName(order)}.`,
@@ -1101,6 +1153,24 @@ export function generateDeliverySummary(order) {
 
 export function clientDataMessage(order) {
   return `Hola, para completar la orden ${order.number} necesito tus datos de contacto y confirmar datos del vehículo. Puedes responder por aquí o completar el link enviado.`;
+}
+
+function targetPartForSheet(order = {}, targetPart = {}) {
+  if (targetPart?.id) {
+    const match = asArray(order.parts).find((part) => part.id === targetPart.id);
+    if (match) return { ...match, ...targetPart };
+  }
+  if (targetPart?.name || targetPart?.notes) return targetPart;
+  return asArray(order.parts)[0] || asArray(order.quote?.parts)[0] || {};
+}
+
+function partOwnerLabel(owner = '') {
+  return ({
+    client: 'Cliente compra',
+    mechanic_quote: 'Mecanico cotiza',
+    mechanic_buy: 'Mecanico compra',
+    mechanic_buying: 'Mecanico compra',
+  })[owner] || owner || 'No definido';
 }
 
 export function quoteTotal(quote) {
@@ -1129,6 +1199,8 @@ export function materializeQuoteParts(quoteParts = [], existingParts = []) {
       price: current?.price || part.amount || '',
       photoDataUrl: current?.photoDataUrl || '',
       validatedBy: current?.validatedBy || '',
+      identificationSheet: current?.identificationSheet || '',
+      identificationSheetGeneratedAt: current?.identificationSheetGeneratedAt || '',
       updatedAt: current?.updatedAt || '',
     };
   });

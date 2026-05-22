@@ -352,11 +352,12 @@ export async function generateAi(input = {}, env = process.env, fetchImpl = glob
   assertObject(input, 'La solicitud IA debe ser un objeto JSON.');
   const task = input.task || 'inspection';
   const order = input.order || {};
-  const prompt = input.prompt || buildAiPrompt(task, order);
+  const context = isObject(input.context) ? input.context : {};
+  const prompt = input.prompt || buildAiPrompt(task, order, context);
   const apiKey = env.GEMINI_API_KEY || '';
 
   if (!apiKey) {
-    const fallbackText = await tryLocalAi(task, order);
+    const fallbackText = await tryLocalAi(task, order, context);
     if (fallbackText) {
       return {
         model: GEMINI_MODEL,
@@ -375,7 +376,7 @@ export async function generateAi(input = {}, env = process.env, fetchImpl = glob
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.2, topP: 0.8, maxOutputTokens: 1200 },
+      generationConfig: { temperature: 0.2, topP: 0.8, maxOutputTokens: task === 'part_sheet' ? 2200 : 1200 },
     }),
   });
 
@@ -726,16 +727,32 @@ function customerRiskFallback(severity) {
   return 'Riesgo bajo, mantener observado.';
 }
 
-async function tryLocalAi(task, order) {
+async function tryLocalAi(task, order, context = {}) {
   try {
     const { localAi } = await import('../src/aiService.js');
-    return localAi(task, order);
+    return localAi(task, order, context);
   } catch {
     return '';
   }
 }
 
-function buildAiPrompt(task, order) {
+function buildAiPrompt(task, order, context = {}) {
+  if (task === 'part_sheet') {
+    return [
+      'Eres un especialista tecnico en identificacion de repuestos automotrices para un taller en Chile.',
+      'Genera una ficha de cotizacion en texto plano para que el usuario pueda pedir la pieza correcta en mostrador.',
+      'Reglas anti-alucinacion:',
+      '- Usa los datos estructurados del software como fuente principal.',
+      '- No inventes codigos OEM, equivalencias, medidas, presiones, temperaturas, voltajes ni resistencias.',
+      '- Si un dato no esta confirmado, escribe NO CONFIRMADO.',
+      '- Advierte sobre gemelos visuales y parametros internos si aplica.',
+      '- VIN, codigo OEM y catalogo oficial tienen prioridad sobre inferencias.',
+      '- Devuelve solo la ficha final en texto plano, sin markdown.',
+      `Orden JSON: ${JSON.stringify(order)}`,
+      `Repuesto objetivo JSON: ${JSON.stringify(context.part || {})}`,
+      'Secciones obligatorias: identificacion del vehiculo, repuesto solicitado, nivel de confianza, codigos, parametros criticos, medidas fisicas, vehiculos hermanos/busqueda alternativa, advertencias finales.',
+    ].join('\n');
+  }
   return [
     'Eres un asistente operativo para un taller mecánico en Chile.',
     'No reemplazas al mecánico; ordenas información y redactas mensajes claros.',

@@ -473,6 +473,24 @@ label {
   background: var(--panel-soft);
 }
 
+.part-sheet-box {
+  display: grid;
+  gap: 8px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+
+.part-sheet-box textarea {
+  min-height: 260px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.part-sheet-box .button-row {
+  margin-top: 4px;
+}
+
 .subcard-header {
   display: flex;
   justify-content: space-between;

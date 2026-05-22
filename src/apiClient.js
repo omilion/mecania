@@ -262,10 +262,10 @@ export async function generateAiRemote(task, order, options = {}) {
     options,
     () => request('/ai/generate', {
       method: 'POST',
-      body: { task, order },
+      body: { task, order, context: options.context || {} },
       options,
     }),
-    () => ({ text: localAi(task, order), source: 'local' }),
+    () => ({ text: localAi(task, order, options.context || {}), source: 'local' }),
   );
 }
 
