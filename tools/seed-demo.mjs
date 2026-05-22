@@ -1,8 +1,9 @@
-import { highQualitySeedOrder } from '../src/domain.js';
+import { buildRichDemoOrders, demoSeedNumbers } from './demo-seed-data.mjs';
 
 const baseUrl = (process.env.SEED_BASE_URL || 'http://127.0.0.1:8787').replace(/\/$/, '');
 const username = process.env.SEED_USER || 'admin';
 const password = process.env.SEED_PASSWORD || process.env.WORKSHOP_DEMO_PASSWORD || 'mecanicok-demo';
+const clientBaseUrl = process.env.SEED_PUBLIC_APP_URL || baseUrl;
 
 async function main() {
   const login = await request('/api/auth/login', {
@@ -11,22 +12,38 @@ async function main() {
   });
   if (!login.token) throw new Error('Login no devolvio token.');
 
-  const order = highQualitySeedOrder();
-  const created = await request('/api/orders', {
-    method: 'POST',
-    token: login.token,
-    body: { order },
-  });
+  const existing = await request('/api/orders', { token: login.token });
+  const existingNumbers = new Set((existing.orders || []).map((order) => order.number));
+  const seededNumbers = new Set(demoSeedNumbers());
+  const orders = buildRichDemoOrders().filter((order) => !existingNumbers.has(order.number));
 
-  const token = await request(`/api/orders/${encodeURIComponent(created.order.id)}/client-token`, {
-    method: 'POST',
-    token: login.token,
-    body: { clientBaseUrl: process.env.SEED_PUBLIC_APP_URL || 'http://127.0.0.1:5173' },
-  });
+  if (!orders.length) {
+    console.log(`Seed demo ya existe: ${[...existingNumbers].filter((number) => seededNumbers.has(number)).join(', ')}`);
+    console.log('No se crearon ordenes nuevas.');
+    return;
+  }
 
-  console.log(`Seed creado: ${created.order.number}`);
-  console.log(`Orden: ${created.order.id}`);
-  console.log(`Portal cliente: ${token.url}`);
+  const created = [];
+  for (const order of orders) {
+    const response = await request('/api/orders', {
+      method: 'POST',
+      token: login.token,
+      body: { order },
+    });
+    const token = await request(`/api/orders/${encodeURIComponent(response.order.id)}/client-token`, {
+      method: 'POST',
+      token: login.token,
+      body: { clientBaseUrl },
+    });
+    created.push({ order: response.order, token });
+  }
+
+  console.log(`Seed demo creado: ${created.length} orden(es).`);
+  for (const item of created) {
+    const mechanic = item.order.assignments?.mechanic || item.order.assignedUserId || 'sin mecanico';
+    console.log(`- ${item.order.number}: ${item.order.client.name} / ${item.order.vehicle.brand} ${item.order.vehicle.model} / ${item.order.status} / ${mechanic}`);
+    console.log(`  Portal cliente: ${item.token.url}`);
+  }
 }
 
 async function request(path, { method = 'GET', token = '', body } = {}) {

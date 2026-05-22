@@ -39,6 +39,7 @@ demo del taller:
 - `admin` o `admin@mecanicok.local`
 - `coordinator` o `coordinator@mecanicok.local`
 - `mechanic` o `mechanic@mecanicok.local`
+- `mechanic2` o `mechanic2@mecanicok.local`
 
 La clave demo local es `mecanicok-demo`. Para cambiarla sin tocar codigo, define una
 variable de entorno en el backend:
@@ -112,6 +113,24 @@ npm run check
 El MVP incluye pruebas de reglas de IA, compatibilidad de vehiculo, cotizacion,
 seguimiento de repuestos, compuertas de ejecucion, API local, uploads y portal
 cliente con token.
+
+## Seed demo
+
+Para cargar un taller demo con 2 mecanicos y 6 ordenes detalladas:
+
+```bash
+SEED_BASE_URL=https://mecania-test.onrender.com \
+SEED_PUBLIC_APP_URL=https://mecania-test.onrender.com \
+SEED_USER=admin \
+SEED_PASSWORD=tu_clave_render \
+npm run seed:demo
+```
+
+El seed crea casos en recepcion/revision, cotizacion, repuestos bloqueados,
+ejecucion, entrega e historial cerrado. Cada orden incluye cliente, vehiculo,
+hallazgos, cotizacion, repuestos, fotos placeholder, tareas, comentarios, eventos
+y link de portal cliente. Si ya existen las ordenes `MO-DEMO-1001` a
+`MO-DEMO-1006`, no las duplica.
 
 ## Limites conocidos
 

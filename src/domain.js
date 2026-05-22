@@ -10,8 +10,8 @@ export const workshopRoles = {
 export const defaultWorkshop = {
   id: DEFAULT_WORKSHOP_ID,
   name: 'Taller Demo MecanicOK',
-  plan: 'Piloto 3 usuarios',
-  maxUsers: 3,
+  plan: 'Piloto 4 usuarios',
+  maxUsers: 4,
   timezone: 'America/Santiago',
 };
 
@@ -46,6 +46,7 @@ export const workshopUsers = [
   { id: 'admin', workshopId: DEFAULT_WORKSHOP_ID, email: 'admin@mecanicok.local', name: 'Carolina Admin', role: 'admin', roleLabel: 'Admin', focus: 'Caja, carga global y bloqueos', phone: '+56911111111', active: true },
   { id: 'coordinator', workshopId: DEFAULT_WORKSHOP_ID, email: 'coordinator@mecanicok.local', name: 'Diego Coord.', role: 'coordinator', roleLabel: 'Coordinador', focus: 'Agenda, repuestos y traspasos', phone: '+56922222222', active: true },
   { id: 'mechanic', workshopId: DEFAULT_WORKSHOP_ID, email: 'mechanic@mecanicok.local', name: 'Luis Mecanico', role: 'mechanic', roleLabel: 'Mecanico', focus: 'Revision, ejecucion y evidencia', phone: '+56933333333', active: true },
+  { id: 'mechanic2', workshopId: DEFAULT_WORKSHOP_ID, email: 'mechanic2@mecanicok.local', name: 'Ana Mecanica', role: 'mechanic', roleLabel: 'Mecanico', focus: 'Diagnostico avanzado, frenos y tren delantero', phone: '+56944444444', active: true },
 ];
 
 export const taskStatuses = {

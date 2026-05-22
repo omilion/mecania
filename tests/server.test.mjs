@@ -61,7 +61,7 @@ test('auth login returns a bearer token and /me resolves the internal user', asy
     assert.equal(loggedIn.json.user.email, 'admin@mecanicok.local');
     assert.equal(loggedIn.json.workshop.id, 'wrk-demo');
     assert.equal(loggedIn.json.permissions.deleteOrders, true);
-    assert.deepEqual(loggedIn.json.users.map((user) => user.id), ['admin', 'coordinator', 'mechanic']);
+    assert.deepEqual(loggedIn.json.users.map((user) => user.id), ['admin', 'coordinator', 'mechanic', 'mechanic2']);
 
     const me = await request(baseUrl, '/api/auth/me', {
       headers: { Authorization: `Bearer ${loggedIn.json.token}` },
@@ -84,6 +84,7 @@ test('workshop endpoint exposes current workshop, users and permissions', async 
       'admin@mecanicok.local',
       'coordinator@mecanicok.local',
       'mechanic@mecanicok.local',
+      'mechanic2@mecanicok.local',
     ]);
   });
 });
@@ -405,7 +406,7 @@ test('workshop users endpoint exposes the internal test team', async () => {
     const authHeaders = await login(baseUrl);
     const users = await request(baseUrl, '/api/workshop/users', { headers: authHeaders });
     assert.equal(users.response.status, 200);
-    assert.deepEqual(users.json.users.map((user) => user.id), ['admin', 'coordinator', 'mechanic']);
+    assert.deepEqual(users.json.users.map((user) => user.id), ['admin', 'coordinator', 'mechanic', 'mechanic2']);
     assert.ok(users.json.users.every((user) => user.active));
   });
 });
