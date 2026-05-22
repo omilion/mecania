@@ -454,10 +454,17 @@ function LoginScreen({ onLogin, initialError = '' }) {
 
   const submit = async (event) => {
     event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const submittedEmail = String(form.get('email') || email).trim();
+    const submittedPassword = String(form.get('password') || password);
+    if (!submittedEmail || !submittedPassword) {
+      setError('Ingresa usuario y contrasena.');
+      return;
+    }
     setSubmitting(true);
     setError('');
     try {
-      await onLogin({ email, username: email, password });
+      await onLogin({ email: submittedEmail, username: submittedEmail, password: submittedPassword });
     } catch (loginError) {
       setError(normalizeSyncError(loginError, 'No se pudo iniciar sesion.'));
     } finally {
@@ -471,10 +478,11 @@ function LoginScreen({ onLogin, initialError = '' }) {
         <PanelTitle icon={ShieldCheck} title="Ingreso interno" subtitle="Acceso para administracion, coordinacion y mecanicos del taller." />
         {error && <InlineAlert tone="red" title="Autenticacion" body={error} />}
         <form className="auth-form" onSubmit={submit}>
-          <Input label="Usuario o email" value={email} onChange={setEmail} placeholder="admin@mecanicok.local" />
+          <Input label="Usuario o email" name="email" value={email} onChange={setEmail} placeholder="admin@mecanicok.local" />
           <label>
             Contrasena
             <input
+              name="password"
               type="password"
               value={password}
               onChange={(event) => setPassword(event.target.value)}
@@ -482,7 +490,7 @@ function LoginScreen({ onLogin, initialError = '' }) {
               required
             />
           </label>
-          <button className="primary-button full" type="submit" disabled={submitting || !email || !password}>
+          <button className="primary-button full" type="submit" disabled={submitting}>
             <ShieldCheck size={17} />
             {submitting ? 'Ingresando...' : 'Ingresar'}
           </button>
@@ -2502,11 +2510,11 @@ function AiPanel({ title, body, children }) {
   );
 }
 
-function Input({ label, value, onChange, placeholder = '' }) {
+function Input({ label, value, onChange, placeholder = '', name = '' }) {
   return (
     <label>
       {label}
-      <input value={value || ''} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
+      <input name={name} value={value || ''} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
 }
