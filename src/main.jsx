@@ -1529,6 +1529,8 @@ function Vehicle({ order, updateOrder }) {
         <PanelTitle icon={Car} title="Ingreso del vehículo" subtitle="Primero identifica el auto: esto condiciona IA, repuestos y cotización." />
         <div className="form-grid">
           <Input label="Patente" value={order.vehicle.plate} onChange={(value) => updateVehicle('plate', value.toUpperCase())} />
+          <Input label="Marca manual" value={order.vehicle.brand} onChange={(value) => updateMake(value)} placeholder="Ej: Chevrolet, Hyundai, Toyota" />
+          <Input label="Modelo manual" value={order.vehicle.model} onChange={(value) => updateModel(value)} placeholder="Ej: Sail, Accent, Yaris" />
           <label>
             Año
             <select value={order.vehicle.year} onChange={(event) => updateYear(event.target.value)} disabled={!catalog}>
@@ -1537,7 +1539,7 @@ function Vehicle({ order, updateOrder }) {
             </select>
           </label>
           <label>
-            Marca
+            Marca EPA
             <select value={order.vehicle.brand} onChange={(event) => updateMake(event.target.value)} disabled={!order.vehicle.year}>
               <option value="">Seleccionar marca</option>
               {makes.map((make) => <option key={make} value={make}>{make}</option>)}
@@ -1550,7 +1552,6 @@ function Vehicle({ order, updateOrder }) {
               {models.map((model) => <option key={model} value={model}>{model}</option>)}
             </select>
           </label>
-          <Input label="Modelo manual" value={order.vehicle.model} onChange={(value) => updateModel(value)} placeholder="Usar si no aparece en EPA" />
           <label>
             Motor EPA
             <select value={order.vehicle.engineLabel || ''} onChange={(event) => updateEngine(event.target.value)} disabled={!engines.length}>
