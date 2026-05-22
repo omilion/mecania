@@ -13,6 +13,7 @@ export function createVehicleCatalog(index) {
     years: () => vehicleYears(index),
     makes: (year) => vehicleMakes(index, year),
     models: (year, make) => vehicleModels(index, year, make),
+    yearsFor: (make, model) => vehicleYearsFor(index, make, model),
     engines: (year, make, model) => vehicleEngineOptions(index, year, make, model),
     stats: () => vehicleCatalogStats(index),
   };
@@ -25,13 +26,41 @@ function vehicleYears(index) {
 }
 
 function vehicleMakes(index, year) {
+  if (!year) {
+    const makes = new Set();
+    for (const vehicleYear of vehicleYears(index)) {
+      for (const make of Object.keys(index[String(vehicleYear)] || {})) {
+        makes.add(make);
+      }
+    }
+    return [...makes].sort((a, b) => a.localeCompare(b));
+  }
   const byMake = index[String(year)] || {};
   return Object.keys(byMake).sort((a, b) => a.localeCompare(b));
 }
 
 function vehicleModels(index, year, make) {
+  if (!make) return [];
+  if (!year) {
+    const models = new Set();
+    for (const vehicleYear of vehicleYears(index)) {
+      for (const model of Object.keys(index[String(vehicleYear)]?.[make] || {})) {
+        models.add(model);
+      }
+    }
+    return [...models].sort((a, b) => a.localeCompare(b));
+  }
   const byModel = index[String(year)]?.[make] || {};
   return Object.keys(byModel).sort((a, b) => a.localeCompare(b));
+}
+
+function vehicleYearsFor(index, make, model = '') {
+  if (!make) return vehicleYears(index);
+  return vehicleYears(index).filter((year) => {
+    const byMake = index[String(year)]?.[make];
+    if (!byMake) return false;
+    return model ? Boolean(byMake[model]) : true;
+  });
 }
 
 function vehicleEngineOptions(index, year, make, model) {

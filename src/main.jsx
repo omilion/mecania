@@ -1530,8 +1530,13 @@ function voiceRecognitionError(error = '') {
   return messages[error] || 'No se pudo usar el dictado por micrófono.';
 }
 
+const OTHER_VEHICLE_VALUE = '__other_vehicle_option__';
+
 function Vehicle({ order, updateOrder }) {
   const [catalog, setCatalog] = useState(null);
+  const [manualMake, setManualMake] = useState(false);
+  const [manualModel, setManualModel] = useState(false);
+  const [manualEngine, setManualEngine] = useState(false);
   useEffect(() => {
     let mounted = true;
     loadVehicleCatalog().then((loadedCatalog) => {
@@ -1543,18 +1548,26 @@ function Vehicle({ order, updateOrder }) {
   }, []);
   const updateVehicle = (key, value) => updateOrder({ vehicle: { ...order.vehicle, [key]: value } });
   const years = catalog?.years() || [];
-  const makes = catalog && order.vehicle.year ? catalog.makes(order.vehicle.year) : [];
-  const models = catalog && order.vehicle.year && order.vehicle.brand ? catalog.models(order.vehicle.year, order.vehicle.brand) : [];
+  const makes = catalog ? catalog.makes(order.vehicle.year) : [];
+  const showManualMake = manualMake || Boolean(order.vehicle.brand && !makes.includes(order.vehicle.brand));
+  const models = catalog && order.vehicle.brand && !showManualMake ? catalog.models(order.vehicle.year, order.vehicle.brand) : [];
+  const showManualModel = manualModel || showManualMake || Boolean(order.vehicle.model && !models.includes(order.vehicle.model));
+  const yearOptions = catalog && order.vehicle.brand && !showManualMake
+    ? catalog.yearsFor(order.vehicle.brand, order.vehicle.model && !showManualModel ? order.vehicle.model : '')
+    : years;
   const engines = order.vehicle.year && order.vehicle.brand && order.vehicle.model
     ? catalog?.engines(order.vehicle.year, order.vehicle.brand, order.vehicle.model) || []
     : [];
+  const engineLabels = engines.map((engine) => engine.label);
+  const showManualEngine = manualEngine || Boolean(order.vehicle.engine && (!order.vehicle.engineLabel || !engineLabels.includes(order.vehicle.engineLabel)));
+  const makeSelectValue = showManualMake ? OTHER_VEHICLE_VALUE : order.vehicle.brand;
+  const modelSelectValue = showManualModel ? OTHER_VEHICLE_VALUE : order.vehicle.model;
+  const engineSelectValue = showManualEngine ? OTHER_VEHICLE_VALUE : order.vehicle.engineLabel || '';
   const stats = catalog?.stats();
   const updateYear = (value) => updateOrder({
     vehicle: {
       ...order.vehicle,
       year: value,
-      brand: '',
-      model: '',
       engine: '',
       engineLabel: '',
       cylinders: '',
@@ -1564,7 +1577,7 @@ function Vehicle({ order, updateOrder }) {
       vehicleClass: '',
     },
   });
-  const updateMake = (value) => updateOrder({
+  const setVehicleMake = (value) => updateOrder({
     vehicle: {
       ...order.vehicle,
       brand: value,
@@ -1578,7 +1591,7 @@ function Vehicle({ order, updateOrder }) {
       vehicleClass: '',
     },
   });
-  const updateModel = (value) => updateOrder({
+  const setVehicleModel = (value) => updateOrder({
     vehicle: {
       ...order.vehicle,
       model: value,
@@ -1591,7 +1604,44 @@ function Vehicle({ order, updateOrder }) {
       vehicleClass: '',
     },
   });
+  const updateMake = (value) => {
+    if (value === OTHER_VEHICLE_VALUE) {
+      setManualMake(true);
+      setManualModel(false);
+      setVehicleMake('');
+      return;
+    }
+    setManualMake(false);
+    setManualModel(false);
+    setVehicleMake(value);
+  };
+  const updateModel = (value) => {
+    if (value === OTHER_VEHICLE_VALUE) {
+      setManualModel(true);
+      setVehicleModel('');
+      return;
+    }
+    setManualModel(false);
+    setVehicleModel(value);
+  };
   const updateEngine = (label) => {
+    if (label === OTHER_VEHICLE_VALUE) {
+      setManualEngine(true);
+      updateOrder({
+        vehicle: {
+          ...order.vehicle,
+          engine: '',
+          engineLabel: '',
+          cylinders: '',
+          fuel: '',
+          transmission: '',
+          drive: '',
+          vehicleClass: '',
+        },
+      });
+      return;
+    }
+    setManualEngine(false);
     const selected = engines.find((engine) => engine.label === label);
     updateOrder({
       vehicle: {
@@ -1613,37 +1663,46 @@ function Vehicle({ order, updateOrder }) {
         <PanelTitle icon={Car} title="Ingreso del vehículo" subtitle="Primero identifica el auto: esto condiciona IA, repuestos y cotización." />
         <div className="form-grid">
           <Input label="Patente" value={order.vehicle.plate} onChange={(value) => updateVehicle('plate', value.toUpperCase())} />
-          <Input label="Marca manual" value={order.vehicle.brand} onChange={(value) => updateMake(value)} placeholder="Ej: Chevrolet, Hyundai, Toyota" />
-          <Input label="Modelo manual" value={order.vehicle.model} onChange={(value) => updateModel(value)} placeholder="Ej: Sail, Accent, Yaris" />
+          <label>
+            Marca EPA
+            <select value={makeSelectValue} onChange={(event) => updateMake(event.target.value)} disabled={!catalog}>
+              <option value="">{catalog ? 'Seleccionar marca' : 'Cargando EPA...'}</option>
+              {makes.map((make) => <option key={make} value={make}>{make}</option>)}
+              <option value={OTHER_VEHICLE_VALUE}>Otra / no aparece</option>
+            </select>
+          </label>
+          {showManualMake && (
+            <Input label="Otra marca" value={order.vehicle.brand} onChange={(value) => setVehicleMake(value)} placeholder="Ej: Chevrolet, Hyundai, Toyota" />
+          )}
+          <label>
+            Modelo EPA
+            <select value={modelSelectValue} onChange={(event) => updateModel(event.target.value)} disabled={!order.vehicle.brand || showManualMake}>
+              <option value="">Seleccionar modelo</option>
+              {models.map((model) => <option key={model} value={model}>{model}</option>)}
+              <option value={OTHER_VEHICLE_VALUE}>Otro / no aparece</option>
+            </select>
+          </label>
+          {showManualModel && (
+            <Input label="Otro modelo" value={order.vehicle.model} onChange={(value) => setVehicleModel(value)} placeholder="Ej: Sail, Accent, Yaris" />
+          )}
           <label>
             Año
             <select value={order.vehicle.year} onChange={(event) => updateYear(event.target.value)} disabled={!catalog}>
               <option value="">{catalog ? 'Seleccionar año' : 'Cargando EPA...'}</option>
-              {years.map((year) => <option key={year} value={year}>{year}</option>)}
-            </select>
-          </label>
-          <label>
-            Marca EPA
-            <select value={order.vehicle.brand} onChange={(event) => updateMake(event.target.value)} disabled={!order.vehicle.year}>
-              <option value="">Seleccionar marca</option>
-              {makes.map((make) => <option key={make} value={make}>{make}</option>)}
-            </select>
-          </label>
-          <label>
-            Modelo EPA
-            <select value={models.includes(order.vehicle.model) ? order.vehicle.model : ''} onChange={(event) => updateModel(event.target.value)} disabled={!order.vehicle.brand}>
-              <option value="">Seleccionar modelo</option>
-              {models.map((model) => <option key={model} value={model}>{model}</option>)}
+              {yearOptions.map((year) => <option key={year} value={year}>{year}</option>)}
             </select>
           </label>
           <label>
             Motor EPA
-            <select value={order.vehicle.engineLabel || ''} onChange={(event) => updateEngine(event.target.value)} disabled={!engines.length}>
+            <select value={engineSelectValue} onChange={(event) => updateEngine(event.target.value)} disabled={!order.vehicle.year || !order.vehicle.brand || !order.vehicle.model}>
               <option value="">Seleccionar motor</option>
               {engines.map((engine) => <option key={engine.label} value={engine.label}>{engine.label}</option>)}
+              <option value={OTHER_VEHICLE_VALUE}>Otro / no aparece</option>
             </select>
           </label>
-          <Input label="Motor / cilindrada manual" value={order.vehicle.engine} onChange={(value) => updateVehicle('engine', value)} placeholder="Ej: 1.4, 1.6, 2.0" />
+          {showManualEngine && (
+            <Input label="Motor / cilindrada manual" value={order.vehicle.engine} onChange={(value) => updateVehicle('engine', value)} placeholder="Ej: 1.4, 1.6, 2.0" />
+          )}
           <Input label="Kilometraje" value={order.vehicle.mileage} onChange={(value) => updateVehicle('mileage', value)} />
           <Input label="Color" value={order.vehicle.color} onChange={(value) => updateVehicle('color', value)} />
         </div>
