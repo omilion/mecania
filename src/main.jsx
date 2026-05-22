@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   AlertTriangle,
@@ -13,6 +13,8 @@ import {
   FileText,
   Gauge,
   MessageCircle,
+  Mic,
+  MicOff,
   PackageCheck,
   Plus,
   Send,
@@ -1387,7 +1389,61 @@ function uploadedPhotoRecord(type, dataUrl, uploaded = {}) {
 }
 
 function Intake({ order, updateOrder }) {
+  const recognitionRef = useRef(null);
+  const dictationBaseRef = useRef('');
+  const [listening, setListening] = useState(false);
+  const [voiceError, setVoiceError] = useState('');
   const vehicleHints = extractVehicleHints(order.intakeText);
+  const SpeechRecognition = typeof window !== 'undefined'
+    ? window.SpeechRecognition || window.webkitSpeechRecognition
+    : null;
+  const stopVoiceInput = () => {
+    recognitionRef.current?.stop();
+    recognitionRef.current = null;
+    setListening(false);
+  };
+  const toggleVoiceInput = () => {
+    if (listening) {
+      stopVoiceInput();
+      return;
+    }
+    if (!SpeechRecognition) {
+      setVoiceError('Dictado no disponible en este navegador. Prueba con Chrome o Edge.');
+      return;
+    }
+    const recognition = new SpeechRecognition();
+    dictationBaseRef.current = order.intakeText || '';
+    recognition.lang = 'es-CL';
+    recognition.continuous = true;
+    recognition.interimResults = true;
+    recognition.onstart = () => {
+      setVoiceError('');
+      setListening(true);
+    };
+    recognition.onerror = (event) => {
+      setVoiceError(voiceRecognitionError(event.error));
+      setListening(false);
+      recognitionRef.current = null;
+    };
+    recognition.onend = () => {
+      setListening(false);
+      recognitionRef.current = null;
+    };
+    recognition.onresult = (event) => {
+      const dictated = Array.from(event.results)
+        .map((result) => result[0]?.transcript || '')
+        .join(' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (!dictated) return;
+      updateOrder((current) => ({
+        ...current,
+        intakeText: mergeDictation(dictationBaseRef.current, dictated),
+      }));
+    };
+    recognitionRef.current = recognition;
+    recognition.start();
+  };
   const generate = async () => {
     updateOrder((current) => ({ ...current, aiIntake: 'Generando con IA...' }));
     try {
@@ -1427,10 +1483,21 @@ function Intake({ order, updateOrder }) {
           onChange={(value) => updateOrder({ intakeText: value })}
           placeholder="Ej: Cliente dice que se calienta en taco, boto agua, revisar bomba, mangueras y electro..."
         />
-        <button className="ai-button" onClick={generate}>
-          <Bot size={18} />
-          Procesar con IA
-        </button>
+        {voiceError && <InlineAlert tone="amber" title="Micrófono" body={voiceError} />}
+        <div className="button-row intake-actions">
+          <button
+            className={`secondary-button ${listening ? 'recording' : ''}`}
+            type="button"
+            onClick={toggleVoiceInput}
+          >
+            {listening ? <MicOff size={18} /> : <Mic size={18} />}
+            {listening ? 'Detener dictado' : 'Dictar diagnóstico'}
+          </button>
+          <button className="ai-button" onClick={generate}>
+            <Bot size={18} />
+            Procesar con IA
+          </button>
+        </div>
         {hasHints && (
           <button className="secondary-button space-top" onClick={applyVehicleHints}>
             <Car size={17} />
@@ -1444,6 +1511,23 @@ function Intake({ order, updateOrder }) {
       />
     </div>
   );
+}
+
+function mergeDictation(base = '', dictated = '') {
+  const cleanBase = String(base || '').trim();
+  const cleanDictated = String(dictated || '').trim();
+  if (!cleanDictated) return cleanBase;
+  return cleanBase ? `${cleanBase}\n${cleanDictated}` : cleanDictated;
+}
+
+function voiceRecognitionError(error = '') {
+  const messages = {
+    'not-allowed': 'Permite el micrófono en el navegador para dictar el diagnóstico.',
+    'no-speech': 'No se detectó voz. Intenta nuevamente hablando cerca del micrófono.',
+    network: 'El servicio de dictado del navegador no respondió. Revisa conexión e intenta nuevamente.',
+    aborted: 'Dictado detenido.',
+  };
+  return messages[error] || 'No se pudo usar el dictado por micrófono.';
 }
 
 function Vehicle({ order, updateOrder }) {
