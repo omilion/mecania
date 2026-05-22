@@ -1,0 +1,17 @@
+node_modules
+dist
+.env
+.env.local
+.env.production
+npm-debug.log*
+server/*.log
+backups/
+*.tar.gz
+*.tgz
+*.bak
+*.dump
+vehicles.csv.zip
+tmp-epa/
+server/data/*.json
+server/data/*.tmp
+server/uploads/

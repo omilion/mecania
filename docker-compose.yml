@@ -1,0 +1,23 @@
+services:
+  mecanic-ok:
+    build: .
+    image: mecanic-ok:pilot
+    container_name: mecanic-ok
+    restart: unless-stopped
+    env_file:
+      - .env.production
+    environment:
+      NODE_ENV: production
+      HOST: 0.0.0.0
+      PORT: 8787
+      DATA_DIR: /data
+      UPLOADS_DIR: /data/uploads
+      PUBLIC_DIR: /app/dist
+    ports:
+      - "127.0.0.1:${APP_PORT:-8787}:8787"
+    volumes:
+      - mecanic-ok-data:/data
+
+volumes:
+  mecanic-ok-data:
+    name: mecanic-ok-data

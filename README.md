@@ -1,0 +1,125 @@
+# MecanicOK MVP
+
+MVP React/Vite para validar un flujo de trabajo mecanico con IA en el medio:
+
+- Recepcion con diagnostico libre.
+- Registro visual del vehiculo.
+- Modo cliente para capturar datos.
+- Revision documentada con hallazgos.
+- Cotizacion con mano de obra, repuestos e insumos.
+- Seguimiento de repuestos y mensajes de WhatsApp.
+- Ejecucion documentada.
+- Entrega con resumen final e historial local.
+- Modo cliente por link local con datos y estado de repuestos.
+- Aprobacion/rechazo de cotizacion.
+- Bloqueo de ejecucion si faltan cliente, vehiculo, hallazgos, aprobacion o repuestos.
+- Fotos de recepcion, repuestos y ejecucion.
+
+Regla clave del MVP: las respuestas de IA y los mensajes de repuestos siempre consideran
+marca, modelo, ano, motor/cilindrada y patente cuando esos datos existen. La app advierte
+que la compatibilidad debe validarse antes de comprar o agendar.
+
+## Ejecutar
+
+```bash
+npm install
+npm run server
+npm run dev
+```
+
+La app usa la API por ruta relativa `/api`. En desarrollo Vite proxya `/api` y
+`/uploads` a `http://127.0.0.1:8787`. Si la API no esta disponible, mantiene
+fallback en `localStorage` para no romper la demo.
+
+## Auth interno
+
+El tablero interno exige login real contra la API local. Para el MVP existen usuarios
+demo del taller:
+
+- `admin` o `admin@mecanicok.local`
+- `coordinator` o `coordinator@mecanicok.local`
+- `mechanic` o `mechanic@mecanicok.local`
+
+La clave demo local es `mecanicok-demo`. Para cambiarla sin tocar codigo, define una
+variable de entorno en el backend:
+
+```bash
+WORKSHOP_DEMO_PASSWORD=clave_segura
+```
+
+Tambien se acepta `AUTH_DEMO_PASSWORD`. Las sesiones usan bearer token, se guardan
+hasheadas en `server/data/auth-sessions.json` y expiran despues de 12 horas. El portal
+cliente sigue usando su link/token propio y no requiere login interno.
+
+Permisos MVP:
+
+- `admin`: administra taller, borra ordenes, crea links cliente, reasigna equipo y gestiona tareas.
+- `coordinator`: coordina trabajos, reasigna equipo, gestiona tareas y crea links cliente; no borra ordenes.
+- `mechanic`: trabaja ordenes y puede avanzar tareas asignadas; no borra ordenes, no reasigna equipo y no genera links cliente.
+
+La API expone el contexto del taller en `GET /api/workshop` y el equipo en
+`GET /api/workshop/users`. El frontend usa el usuario autenticado como sesion real
+y la lista del taller solo para asignaciones.
+
+Datos backend:
+
+- Ordenes: `server/data/orders.json`
+- Tokens cliente: `server/data/client-tokens.json`
+- Sesiones internas: `server/data/auth-sessions.json`
+- Uploads: `server/uploads/`
+
+En Docker/VPS esos datos viven en el volumen persistente montado como `/data`.
+
+Sprint 2 dejo operativos los uploads contra la API local: el backend valida tipo
+de archivo, tamano y firma basica de imagen/PDF, y permite borrar archivos
+cuando una foto se quita desde la interfaz.
+
+## IA Gemini
+
+La IA remota corre server-side y usa exclusivamente `gemini-3-flash-preview`.
+Configura `.env.local` o variables de entorno para el backend:
+
+```bash
+GEMINI_API_KEY=tu_api_key
+```
+
+La API key no debe quedar escrita en el codigo ni en variables `VITE_*`, porque
+esas quedan expuestas al frontend.
+
+## Selector de vehiculo
+
+El MVP usa un indice local generado desde el CSV oficial de EPA/FuelEconomy.gov.
+Permite seleccionar `ano -> marca -> modelo -> motor`, incluyendo cilindrada,
+cilindros, combustible y transmision cuando el dato existe. La fuente cubre
+vehiculos EPA/FuelEconomy.gov y puede regenerarse con:
+
+```bash
+npm run build:vehicles
+```
+
+El CSV bruto no se versiona. Para regenerar, descarga `vehicles.csv.zip` desde
+`https://www.fueleconomy.gov/feg/download.shtml`, extrae `vehicles.csv` en
+`tmp-epa/` y ejecuta el comando anterior.
+
+## Pruebas
+
+```bash
+npm test
+npm run build
+npm run check
+```
+
+El MVP incluye pruebas de reglas de IA, compatibilidad de vehiculo, cotizacion,
+seguimiento de repuestos, compuertas de ejecucion, API local, uploads y portal
+cliente con token.
+
+## Limites conocidos
+
+- El link con token funciona contra la API local y mantiene fallback demo en `localStorage` si la API no esta disponible.
+- Para produccion falta base de datos multi-taller, invitaciones/restablecimiento de clave, HTTPS obligatorio, storage externo y cola de notificaciones.
+- WhatsApp se abre con links generados; la API oficial queda para una siguiente etapa.
+
+## Deploy VPS piloto
+
+Usar `docker-compose.yml` y `.env.production.example` como base. La guia operativa
+esta en `docs/deploy-vps.md` y el checklist de salida en `docs/VPS_PILOT_SPRINT.md`.

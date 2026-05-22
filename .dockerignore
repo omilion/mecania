@@ -1,0 +1,17 @@
+node_modules
+dist
+server/data
+server/uploads
+server/*.log
+qa-screenshots
+tmp-epa
+.git
+.env*
+!.env.example
+!.env.production.example
+backups
+*.tar.gz
+*.tgz
+*.bak
+*.dump
+npm-debug.log
