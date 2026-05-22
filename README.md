@@ -58,6 +58,13 @@ Permisos MVP:
 - `coordinator`: coordina trabajos, reasigna equipo, gestiona tareas y crea links cliente; no borra ordenes.
 - `mechanic`: trabaja ordenes y puede avanzar tareas asignadas; no borra ordenes, no reasigna equipo y no genera links cliente.
 
+Responsabilidades por workflow:
+
+- `Vehículo`, `Diagnóstico`, `Fotos`, `Revisión` y `Ejecución`: responsable principal `mechanic`; la IA puede asistir ordenando información o sugiriendo faltantes.
+- `Cliente`, `Cotización`, `Repuestos` y `Entrega`: responsable principal `coordinator`; `admin` puede intervenir y el mecánico aporta datos técnicos.
+- `Admin`: supervisa bloqueos, equipo asignado, tareas internas y acciones sensibles.
+- Futuro `IA`: colaborador, no dueño de decisión; puede prellenar, sugerir y redactar, pero la validación final queda en el rol humano responsable.
+
 La API expone el contexto del taller en `GET /api/workshop` y el equipo en
 `GET /api/workshop/users`. El frontend usa el usuario autenticado como sesion real
 y la lista del taller solo para asignaciones.

@@ -97,22 +97,22 @@ const sections = [
 ];
 
 const workflowSteps = [
-  { id: 'vehicle', label: 'Vehiculo', icon: Car },
-  { id: 'intake', label: 'Diagnostico', icon: MessageCircle },
-  { id: 'reception_photos', label: 'Fotos recepcion', icon: Camera },
+  { id: 'vehicle', label: 'Vehículo', icon: Car },
+  { id: 'intake', label: 'Diagnóstico', icon: MessageCircle },
+  { id: 'reception_photos', label: 'Fotos recepción', icon: Camera },
   { id: 'detail_photos', label: 'Fotos detalle', icon: Camera },
   { id: 'client', label: 'Cliente', icon: User },
-  { id: 'inspection', label: 'Revision', icon: ClipboardCheck },
-  { id: 'quote', label: 'Cotizacion', icon: FileText },
+  { id: 'inspection', label: 'Revisión', icon: ClipboardCheck },
+  { id: 'quote', label: 'Cotización', icon: FileText },
   { id: 'parts', label: 'Repuestos', icon: PackageCheck },
-  { id: 'execution', label: 'Ejecucion', icon: Wrench },
+  { id: 'execution', label: 'Ejecución', icon: Wrench },
   { id: 'handoff', label: 'Entrega', icon: ShieldCheck },
 ];
 
 const assignmentLabels = {
   responsible: 'Responsable',
   coordinator: 'Coordinador',
-  mechanic: 'Mecanico',
+  mechanic: 'Mecánico',
 };
 
 const assignmentRoles = {
@@ -475,12 +475,12 @@ function LoginScreen({ onLogin, initialError = '' }) {
   return (
     <main className="auth-shell">
       <section className="auth-card panel">
-        <PanelTitle icon={ShieldCheck} title="Ingreso interno" subtitle="Acceso para administracion, coordinacion y mecanicos del taller." />
-        {error && <InlineAlert tone="red" title="Autenticacion" body={error} />}
+        <PanelTitle icon={ShieldCheck} title="Ingreso interno" subtitle="Acceso para administración, coordinación y mecánicos del taller." />
+        {error && <InlineAlert tone="red" title="Autenticación" body={error} />}
         <form className="auth-form" onSubmit={submit}>
           <Input label="Usuario o email" name="email" value={email} onChange={setEmail} placeholder="admin@mecanicok.local" />
           <label>
-            Contrasena
+            Contraseña
             <input
               name="password"
               type="password"
@@ -540,7 +540,7 @@ function normalizeAuthUser(user = {}) {
     role,
     name: user.name || user.displayName || user.email || fallback?.name || id,
     roleLabel: user.roleLabel || workshopRoles[role] || fallback?.roleLabel || role,
-    focus: user.focus || fallback?.focus || 'Sesion autenticada',
+    focus: user.focus || fallback?.focus || 'Sesión autenticada',
     permissions: user.permissions || fallback?.permissions,
     active: user.active !== false,
   };
@@ -587,7 +587,7 @@ function Dashboard({ orders, currentUser, openJob, setSection, openJobsFilter, a
             </button>
           ))}
           {!myPending.length && (
-            <EmptyState title="Nada critico para este rol" body="Cambia de usuario para validar el tablero de coordinador o mecanico." />
+            <EmptyState title="Nada crítico para este rol" body="Cambia de usuario para validar el tablero de coordinador o mecánico." />
           )}
         </div>
       </section>
@@ -710,7 +710,7 @@ function Jobs({ orders, activeOrder, currentUser, users, openJob, jobStep, setJo
         <div>
           <p className="eyebrow">Atencion en terreno</p>
           <h2>Primera visita</h2>
-          <p>Inicia el wizard completo: vehiculo, diagnostico, fotos, cliente, revision y cotizacion.</p>
+          <p>Inicia el wizard completo: vehículo, diagnóstico, fotos, cliente, revisión y cotización.</p>
         </div>
         <button className="primary-button hero-action" onClick={addOrder}>
           <Plus size={22} />
@@ -898,7 +898,7 @@ function AssignmentPanel({ order, users, currentUser, updateOrder }) {
       <div>
         <p className="eyebrow">Equipo asignado</p>
         <h2>Responsables de la orden</h2>
-        <p>Sesion actual: {currentUser.name} ({currentUser.roleLabel}). {summary.open} tareas abiertas.</p>
+        <p>Sesión actual: {currentUser.name} ({currentUser.roleLabel}). {summary.open} tareas abiertas.</p>
         {!canAssign && <p className="permission-note">Tu rol puede trabajar la orden, pero no reasignar equipo.</p>}
       </div>
       <div className="assignment-grid">
@@ -919,7 +919,7 @@ function AssignmentPanel({ order, users, currentUser, updateOrder }) {
         ))}
       </div>
       <div className="form-grid compact">
-        <Textarea label="Nota interna de coordinacion" value={order.internalNotes || ''} onChange={(value) => updateOrder({ internalNotes: value })} placeholder="Ej: cliente solo puede recibir martes, validar pago antes de comprar repuesto..." />
+        <Textarea label="Nota interna de coordinación" value={order.internalNotes || ''} onChange={(value) => updateOrder({ internalNotes: value })} placeholder="Ej: cliente solo puede recibir martes, validar pago antes de comprar repuesto..." />
         <div className="task-composer">
           <Input label="Nueva tarea" value={taskTitle} onChange={setTaskTitle} placeholder="Ej: validar foto de repuesto, llamar cliente, revisar fuga" />
           <div className="form-grid compact">
@@ -953,7 +953,7 @@ function AssignmentPanel({ order, users, currentUser, updateOrder }) {
             <Plus size={17} />
             Agregar tarea
           </button>
-          {!canManageTasks && <p className="permission-note">Solo administracion o coordinacion crea nuevas tareas internas.</p>}
+          {!canManageTasks && <p className="permission-note">Solo administración o coordinación crea nuevas tareas internas.</p>}
         </div>
       </div>
       <div className="task-list compact-list">
@@ -1241,30 +1241,30 @@ function pendingPriority(item, user) {
   if (item.task?.priority === 'urgent') return 0;
   if (item.task?.status === 'blocked') return 0;
   if (action === 'No encender motor') return 0;
-  if (user.role === 'mechanic' && ['Registrar revision', 'Completar vehiculo'].includes(action)) return 0;
-  if (user.role === 'coordinator' && ['Resolver repuestos', 'Esperar aprobacion'].includes(action)) return 0;
+  if (user.role === 'mechanic' && ['Registrar revisión', 'Completar vehículo'].includes(action)) return 0;
+  if (user.role === 'coordinator' && ['Resolver repuestos', 'Esperar aprobación'].includes(action)) return 0;
   if (['admin', 'coordinator'].includes(user.role) && hasAssignmentGap(item.order)) return 0;
   return prepScore(item.order).state === 'red' ? 1 : 2;
 }
 
 function dashboardHint(user, counts) {
   if (user.role === 'admin') return `${counts.open} trabajos abiertos. Revisa responsables sin asignar y bloqueos antes de coordinar agenda.`;
-  if (user.role === 'coordinator') return `${counts.waiting} ordenes esperando repuestos. Prioriza aprobaciones, compras y traspaso a mecanico.`;
-  return `${counts.ready} ordenes listas para ejecutar. Entra a tus pendientes para registrar revision, evidencia y entrega.`;
+  if (user.role === 'coordinator') return `${counts.waiting} órdenes esperando repuestos. Prioriza aprobaciones, compras y traspaso a mecánico.`;
+  return `${counts.ready} órdenes listas para ejecutar. Entra a tus pendientes para registrar revisión, evidencia y entrega.`;
 }
 
 function nextAction(order) {
   if (order.status === 'closed') return 'Trabajo cerrado';
   if (engineSafetyStatus(order).state === 'critical') return 'No encender motor';
   if (!order.client.name || !order.client.phone) return 'Completar datos del cliente';
-  if (!order.vehicle.brand || !order.vehicle.model || !order.vehicle.year || !order.vehicle.engine) return 'Completar vehiculo';
-  if (!order.findings.length) return 'Registrar revision';
-  if (!order.quote.sent) return 'Preparar cotizacion';
-  if (order.quote.rejected) return 'Rehacer cotizacion';
-  if (!order.quote.approved) return 'Esperar aprobacion';
+  if (!order.vehicle.brand || !order.vehicle.model || !order.vehicle.year || !order.vehicle.engine) return 'Completar vehículo';
+  if (!order.findings.length) return 'Registrar revisión';
+  if (!order.quote.sent) return 'Preparar cotización';
+  if (order.quote.rejected) return 'Rehacer cotización';
+  if (!order.quote.approved) return 'Esperar aprobación';
   if (prepScore(order).state !== 'green') return 'Resolver repuestos';
-  if (order.status === 'ready_delivery') return 'Entregar vehiculo';
-  return 'Sin pendientes criticos';
+  if (order.status === 'ready_delivery') return 'Entregar vehículo';
+  return 'Sin pendientes críticos';
 }
 
 function actionStep(input) {
@@ -1273,11 +1273,11 @@ function actionStep(input) {
   const action = nextAction(order);
   if (action === 'No encender motor') return 'inspection';
   if (action === 'Completar datos del cliente') return 'client';
-  if (action === 'Completar vehiculo') return 'vehicle';
-  if (action === 'Registrar revision') return 'inspection';
-  if (action === 'Preparar cotizacion' || action === 'Rehacer cotizacion' || action === 'Esperar aprobacion') return 'quote';
+  if (action === 'Completar vehículo') return 'vehicle';
+  if (action === 'Registrar revisión') return 'inspection';
+  if (action === 'Preparar cotización' || action === 'Rehacer cotización' || action === 'Esperar aprobación') return 'quote';
   if (action === 'Resolver repuestos') return 'parts';
-  if (action === 'Entregar vehiculo' || action === 'Trabajo cerrado') return 'handoff';
+  if (action === 'Entregar vehículo' || action === 'Trabajo cerrado') return 'handoff';
   if (!executionGate(order).ok) return 'execution';
   return 'execution';
 }
@@ -1300,15 +1300,15 @@ function stepComplete(order, step) {
 
 function missingStepHint(order, step) {
   const hints = {
-    vehicle: 'Faltan marca, modelo, ano o motor/cilindrada.',
-    intake: 'Falta diagnostico procesado por IA.',
-    reception_photos: 'Faltan fotos generales minimas: frontal, laterales, patente, odometro y tablero.',
+    vehicle: 'Faltan marca, modelo, año o motor/cilindrada.',
+    intake: 'Falta diagnóstico procesado por IA.',
+    reception_photos: 'Faltan fotos generales mínimas: frontal, laterales, patente, odómetro y tablero.',
     detail_photos: 'Agrega al menos una foto nombrada de la zona a revisar.',
     client: 'Faltan nombre o WhatsApp del cliente.',
-    inspection: 'Falta registrar hallazgos de revision.',
-    quote: order.quote.rejected ? 'Cotizacion rechazada: ajusta valores o alcance y vuelve a enviar.' : 'Falta preparar o aprobar la cotizacion.',
+    inspection: 'Falta registrar hallazgos de revisión.',
+    quote: order.quote.rejected ? 'Cotización rechazada: ajusta valores o alcance y vuelve a enviar.' : 'Falta preparar o aprobar la cotización.',
     parts: prepScore(order).detail,
-    execution: executionGate(order).ok ? 'Falta documentar ejecucion.' : `Bloqueos: ${executionGate(order).blockers.join(', ')}`,
+    execution: executionGate(order).ok ? 'Falta documentar ejecución.' : `Bloqueos: ${executionGate(order).blockers.join(', ')}`,
     handoff: 'Falta resumen final o cierre de orden.',
   };
   return hints[step] || 'Completa los datos del paso.';
@@ -1420,7 +1420,7 @@ function Intake({ order, updateOrder }) {
   return (
     <div className="two-column">
       <section className="panel">
-        <PanelTitle icon={MessageCircle} title="Diagnostico libre" subtitle="El mecanico escribe o dicta al lote mientras conversa." />
+        <PanelTitle icon={MessageCircle} title="Diagnóstico libre" subtitle="El mecánico escribe o dicta al lote mientras conversa." />
         <Textarea
           label="Nota inicial"
           value={order.intakeText}
@@ -1434,13 +1434,13 @@ function Intake({ order, updateOrder }) {
         {hasHints && (
           <button className="secondary-button space-top" onClick={applyVehicleHints}>
             <Car size={17} />
-            Aplicar datos de vehiculo detectados
+            Aplicar datos de vehículo detectados
           </button>
         )}
       </section>
       <AiPanel
-        title="IA ordena la recepcion"
-        body={order.aiIntake || 'La IA extraera sintomas, sistema afectado, preguntas faltantes y checklist inicial.'}
+        title="IA ordena la recepción"
+        body={order.aiIntake || 'La IA extraerá síntomas, sistema afectado, preguntas faltantes y checklist inicial.'}
       />
     </div>
   );
@@ -1526,13 +1526,13 @@ function Vehicle({ order, updateOrder }) {
   return (
     <div className="two-column">
       <section className="panel wide">
-        <PanelTitle icon={Car} title="Ingreso del vehiculo" subtitle="Primero identifica el auto: esto condiciona IA, repuestos y cotizacion." />
+        <PanelTitle icon={Car} title="Ingreso del vehículo" subtitle="Primero identifica el auto: esto condiciona IA, repuestos y cotización." />
         <div className="form-grid">
           <Input label="Patente" value={order.vehicle.plate} onChange={(value) => updateVehicle('plate', value.toUpperCase())} />
           <label>
-            Ano
+            Año
             <select value={order.vehicle.year} onChange={(event) => updateYear(event.target.value)} disabled={!catalog}>
-              <option value="">{catalog ? 'Seleccionar ano' : 'Cargando EPA...'}</option>
+              <option value="">{catalog ? 'Seleccionar año' : 'Cargando EPA...'}</option>
               {years.map((year) => <option key={year} value={year}>{year}</option>)}
             </select>
           </label>
@@ -1568,15 +1568,15 @@ function Vehicle({ order, updateOrder }) {
         <Checklist items={[
           ['Marca informada', Boolean(order.vehicle.brand)],
           ['Modelo informado', Boolean(order.vehicle.model)],
-          ['Ano informado', Boolean(order.vehicle.year)],
+          ['Año informado', Boolean(order.vehicle.year)],
           ['Motor/cilindrada informado', Boolean(order.vehicle.engine)],
-          ['Cilindros / combustible / transmision', Boolean(order.vehicle.cylinders || order.vehicle.fuel || order.vehicle.transmission)],
+          ['Cilindros / combustible / transmisión', Boolean(order.vehicle.cylinders || order.vehicle.fuel || order.vehicle.transmission)],
           ['Patente informada', Boolean(order.vehicle.plate)],
         ]} />
         <InlineAlert
           tone="amber"
-          title="Validacion asistida"
-          body="EPA mejora la captura de datos, pero el mecanico debe validar compatibilidad de repuestos con codigo, muestra o VIN cuando aplique."
+          title="Validación asistida"
+          body="EPA mejora la captura de datos, pero el mecánico debe validar compatibilidad de repuestos con código, muestra o VIN cuando aplique."
         />
         <a className="source-link" href={EPA_VEHICLE_SOURCE_URL} target="_blank" rel="noreferrer">
           Ver fuente EPA
@@ -1590,8 +1590,8 @@ function VisitPhotos({ order, updateOrder, mode }) {
   const [customLabel, setCustomLabel] = useState('');
   const [photoError, setPhotoError] = useState('');
   const labels = mode === 'general'
-    ? ['Frontal', 'Trasera', 'Lateral izquierdo', 'Lateral derecho', 'Patente', 'Odometro', 'Tablero']
-    : ['Zona a revisar', 'Dano previo', 'Fuga visible', 'Pieza afectada'];
+    ? ['Frontal', 'Trasera', 'Lateral izquierdo', 'Lateral derecho', 'Patente', 'Odómetro', 'Tablero']
+    : ['Zona a revisar', 'Daño previo', 'Fuga visible', 'Pieza afectada'];
   const addPhoto = (label, file) => {
     readPhotoFile(file, (dataUrl, uploaded) => {
       updateOrder((current) => ({
@@ -1825,7 +1825,7 @@ function ClientPortal({ order, updateOrder, error = '', syncStatus = '', onRefre
       </section>
 
       <section className="panel">
-        <PanelTitle icon={ClipboardCheck} title="Revision del vehiculo" subtitle="Resumen simple de lo encontrado por el taller." />
+        <PanelTitle icon={ClipboardCheck} title="Revisión del vehículo" subtitle="Resumen simple de lo encontrado por el taller." />
         {order.risk?.customerMessage && <InlineAlert tone={order.risk?.noStart ? 'red' : 'amber'} title={order.risk?.noStart ? 'No encender' : 'Riesgo informado'} body={order.risk.customerMessage} />}
         <div className="stack">
           {(order.customerFindings || []).map((finding) => (
@@ -1884,7 +1884,7 @@ function ClientPortal({ order, updateOrder, error = '', syncStatus = '', onRefre
             </div>
           ))}
           {!order.parts.length && !order.quote.parts.length && (
-            <EmptyState title="Sin repuestos informados" body="El mecanico aun no agrego repuestos para seguimiento." />
+            <EmptyState title="Sin repuestos informados" body="El mecánico aún no agregó repuestos para seguimiento." />
           )}
         </div>
       </section>
@@ -2041,7 +2041,7 @@ function Inspection({ order, updateOrder }) {
               <Textarea label="Descripcion tecnica" value={finding.description} onChange={(value) => updateFinding(finding.id, 'description', value)} />
               <Textarea label="Recomendacion al cliente" value={finding.recommendation} onChange={(value) => updateFinding(finding.id, 'recommendation', value)} />
               {(finding.safetyImpact === 'no_start' || finding.safetyImpact === 'no_drive') && (
-                <Textarea label="Condicion para liberar seguridad" value={finding.clearanceNote || ''} onChange={(value) => updateFinding(finding.id, 'clearanceNote', value)} placeholder="Ej: muestra de aceite limpia, presion de refrigeracion OK, mecanico autoriza prueba sin carga" />
+                <Textarea label="Condición para liberar seguridad" value={finding.clearanceNote || ''} onChange={(value) => updateFinding(finding.id, 'clearanceNote', value)} placeholder="Ej: muestra de aceite limpia, presión de refrigeración OK, mecánico autoriza prueba sin carga" />
               )}
               <div className="form-grid compact">
                 <Input label="Mano de obra sugerida" value={finding.laborRequired || ''} onChange={(value) => updateFinding(finding.id, 'laborRequired', value)} placeholder="Ej: cambio bomba de agua" />
@@ -2130,7 +2130,7 @@ function Quote({ order, updateOrder }) {
           labor: nextLabor,
           parts: nextParts,
           extras: nextExtras,
-          note: current.quote.note || 'Cotizacion generada desde revision. Valores editables por el mecanico.',
+          note: current.quote.note || 'Cotización generada desde revisión. Valores editables por el mecánico.',
           sent: false,
           approved: false,
           rejected: false,
@@ -2175,14 +2175,14 @@ function Quote({ order, updateOrder }) {
   return (
     <div className="two-column">
       <section className="panel">
-        <PanelTitle icon={FileText} title="Cotizacion" subtitle="Separar mano de obra, repuestos, insumos y gestion." />
+        <PanelTitle icon={FileText} title="Cotización" subtitle="Separar mano de obra, repuestos, insumos y gestión." />
         <div className="prep-banner amber">
-          <strong>Base desde revision</strong>
-          <span>La cotizacion debe partir de los hallazgos; el mecanico ajusta valores y alcance antes de enviar.</span>
+          <strong>Base desde revisión</strong>
+          <span>La cotización debe partir de los hallazgos; el mecánico ajusta valores y alcance antes de enviar.</span>
         </div>
         <button className="secondary-button space-bottom" onClick={syncFromInspection}>
           <ClipboardCheck size={17} />
-          Sincronizar desde revision
+          Sincronizar desde revisión
         </button>
         <div className="quote-stages">
           {quoteStages(order.quote).map((stage) => (
@@ -2230,8 +2230,8 @@ function Quote({ order, updateOrder }) {
           Estado: {order.quote.approved ? 'aprobada' : order.quote.rejected ? 'rechazada' : order.quote.sent ? 'enviada' : 'borrador'}
         </div>
       </section>
-      <AiPanel title="Mensaje de cotizacion" body={order.aiMessages.quote || 'La IA generara un texto claro para WhatsApp con valor, repuestos, condiciones y proximos pasos.'}>
-        <WhatsAppButton phone={order.client.phone} text={order.aiMessages.quote || generateQuoteMessage(order)} label="Enviar cotizacion por WhatsApp" enabled={order.client.contactConsent} />
+      <AiPanel title="Mensaje de cotización" body={order.aiMessages.quote || 'La IA generará un texto claro para WhatsApp con valor, repuestos, condiciones y próximos pasos.'}>
+        <WhatsAppButton phone={order.client.phone} text={order.aiMessages.quote || generateQuoteMessage(order)} label="Enviar cotización por WhatsApp" enabled={order.client.contactConsent} />
       </AiPanel>
     </div>
   );
@@ -2278,7 +2278,7 @@ function Parts({ order, updateOrder }) {
   return (
     <div className="two-column">
       <section className="panel">
-        <PanelTitle icon={PackageCheck} title="Seguimiento de repuestos" subtitle="El cliente o mecanico informa si compro, llega, se retrasa o es incorrecto." />
+        <PanelTitle icon={PackageCheck} title="Seguimiento de repuestos" subtitle="El cliente o mecánico informa si compró, llega, se retrasa o es incorrecto." />
         <div className={`prep-banner ${score.state}`}>
           <strong>{score.label}</strong>
           <span>{score.detail}</span>
@@ -2293,8 +2293,8 @@ function Parts({ order, updateOrder }) {
                   Responsable
                   <select value={part.owner} onChange={(event) => updatePart(part.id, 'owner', event.target.value)}>
                     <option value="client">Cliente compra</option>
-                    <option value="mechanic_quote">Mecanico cotiza</option>
-                    <option value="mechanic_buy">Mecanico compra</option>
+                    <option value="mechanic_quote">Mecánico cotiza</option>
+                    <option value="mechanic_buy">Mecánico compra</option>
                   </select>
                 </label>
                 <label>
@@ -2329,7 +2329,7 @@ function Parts({ order, updateOrder }) {
             </div>
           ))}
           {!order.parts.length && (
-            <EmptyState title="Sin repuestos en seguimiento" body="Agrega repuestos manualmente o aprueba/prepara una cotizacion con repuestos para materializarlos aqui." />
+            <EmptyState title="Sin repuestos en seguimiento" body="Agrega repuestos manualmente o aprueba/prepara una cotización con repuestos para materializarlos aquí." />
           )}
         </div>
         <div className="button-row">
@@ -2396,7 +2396,7 @@ function Execution({ order, updateOrder }) {
           onChange={(value) => updateOrder((current) => ({ ...current, executionNotes: value, status: gate.ok ? 'in_progress' : current.status }))}
           placeholder="Ej: Se retira bomba con fuga, se instala nueva, se rellena refrigerante, se purga y se prueba temperatura..."
         />
-        {!gate.ok && <InlineAlert tone="amber" title="Notas permitidas, ejecucion bloqueada" body="Puedes preparar informacion, pero el estado no avanzara a ejecucion hasta resolver los bloqueos." />}
+        {!gate.ok && <InlineAlert tone="amber" title="Notas permitidas, ejecución bloqueada" body="Puedes preparar información, pero el estado no avanzará a ejecución hasta resolver los bloqueos." />}
         {photoError && <InlineAlert tone="red" title="Foto no cargada" body={photoError} />}
         <div className="photo-grid compact-photos">
           {progressPhotoTypes.map((type) => (
@@ -2509,7 +2509,7 @@ function AiPanel({ title, body, children }) {
     <section className="panel ai-panel">
       <details className="ai-disclosure" open>
         <summary>
-          <PanelTitle icon={Bot} title={title} subtitle="Borrador editable: el mecanico valida antes de enviar." />
+          <PanelTitle icon={Bot} title={title} subtitle="Borrador editable: el mecánico valida antes de enviar." />
         </summary>
         <pre>{body}</pre>
         {children}

@@ -397,7 +397,7 @@ function localClientOrderView(order = {}) {
       summary: finding.symptom || finding.description || 'Hallazgo registrado por el taller.',
       recommendation: finding.recommendation || 'El taller indicara el siguiente paso recomendado.',
       risk: finding.customerRisk || 'Riesgo por confirmar con el taller.',
-      quoteStatus: ({ cotizar: 'Incluido en cotizacion', incluido: 'Incluido', recomendado: 'Recomendado', no_cotizar: 'Solo informativo' })[finding.quoteMode] || 'Incluido en cotizacion',
+      quoteStatus: ({ cotizar: 'Incluido en cotización', incluido: 'Incluido', recomendado: 'Recomendado', no_cotizar: 'Solo informativo' })[finding.quoteMode] || 'Incluido en cotización',
       safetyImpact: finding.safetyImpact || 'none',
     })),
   };

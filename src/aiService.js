@@ -83,16 +83,16 @@ export function geminiUrl(apiKey, model = GEMINI_MODEL) {
 
 function buildPrompt(task, order) {
   return [
-    'Eres un asistente operativo para mecanicos. No reemplazas al mecanico; ordenas informacion, sugieres checklist, y redactas mensajes claros.',
-    'Usa espanol chileno neutro, directo y profesional.',
-    'Regla critica: toda sugerencia de repuestos debe considerar marca, modelo, ano, motor/cilindrada y patente. Si faltan datos, dilo.',
+    'Eres un asistente operativo para mecánicos. No reemplazas al mecánico; ordenas información, sugieres checklist, y redactas mensajes claros.',
+    'Usa español chileno neutro, directo y profesional.',
+    'Regla crítica: toda sugerencia de repuestos debe considerar marca, modelo, año, motor/cilindrada y patente. Si faltan datos, dilo.',
     `Tarea: ${task}.`,
     `Vehiculo: ${vehicleSpec(order)}.`,
     `Cliente: ${order.client?.name || 'sin registrar'}, WhatsApp: ${order.client?.phone || 'sin registrar'}.`,
     `Nota inicial: ${order.intakeText || 'sin nota'}.`,
     `Hallazgos: ${order.findings?.map((finding) => `${finding.area}: ${finding.description}. Recomendacion: ${finding.recommendation}`).join(' | ') || 'sin hallazgos'}.`,
     `Repuestos: ${order.parts?.map((part) => `${part.name}: ${part.status}, ${part.notes || 'sin notas'}`).join(' | ') || 'sin repuestos'}.`,
-    `Cotizacion total: ${order.quote ? JSON.stringify(order.quote) : 'sin cotizacion'}.`,
-    'Devuelve solo el texto final util para el mecanico/cliente. No inventes datos tecnicos especificos si no estan disponibles.',
+    `Cotización total: ${order.quote ? JSON.stringify(order.quote) : 'sin cotización'}.`,
+    'Devuelve solo el texto final útil para el mecánico/cliente. No inventes datos técnicos específicos si no están disponibles.',
   ].join('\n');
 }

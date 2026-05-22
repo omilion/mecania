@@ -40,7 +40,7 @@ async function main() {
 
   console.log(`Seed demo creado: ${created.length} orden(es).`);
   for (const item of created) {
-    const mechanic = item.order.assignments?.mechanic || item.order.assignedUserId || 'sin mecanico';
+    const mechanic = item.order.assignments?.mechanic || item.order.assignedUserId || 'sin mecánico';
     console.log(`- ${item.order.number}: ${item.order.client.name} / ${item.order.vehicle.brand} ${item.order.vehicle.model} / ${item.order.status} / ${mechanic}`);
     console.log(`  Portal cliente: ${item.token.url}`);
   }

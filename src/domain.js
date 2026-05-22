@@ -4,7 +4,7 @@ export const DEFAULT_WORKSHOP_ID = 'wrk-demo';
 export const workshopRoles = {
   admin: 'Admin',
   coordinator: 'Coordinador',
-  mechanic: 'Mecanico',
+  mechanic: 'Mecánico',
 };
 
 export const defaultWorkshop = {
@@ -45,8 +45,8 @@ export const rolePermissions = {
 export const workshopUsers = [
   { id: 'admin', workshopId: DEFAULT_WORKSHOP_ID, email: 'admin@mecanicok.local', name: 'Carolina Admin', role: 'admin', roleLabel: 'Admin', focus: 'Caja, carga global y bloqueos', phone: '+56911111111', active: true },
   { id: 'coordinator', workshopId: DEFAULT_WORKSHOP_ID, email: 'coordinator@mecanicok.local', name: 'Diego Coord.', role: 'coordinator', roleLabel: 'Coordinador', focus: 'Agenda, repuestos y traspasos', phone: '+56922222222', active: true },
-  { id: 'mechanic', workshopId: DEFAULT_WORKSHOP_ID, email: 'mechanic@mecanicok.local', name: 'Luis Mecanico', role: 'mechanic', roleLabel: 'Mecanico', focus: 'Revision, ejecucion y evidencia', phone: '+56933333333', active: true },
-  { id: 'mechanic2', workshopId: DEFAULT_WORKSHOP_ID, email: 'mechanic2@mecanicok.local', name: 'Ana Mecanica', role: 'mechanic', roleLabel: 'Mecanico', focus: 'Diagnostico avanzado, frenos y tren delantero', phone: '+56944444444', active: true },
+  { id: 'mechanic', workshopId: DEFAULT_WORKSHOP_ID, email: 'mechanic@mecanicok.local', name: 'Luis Mecánico', role: 'mechanic', roleLabel: 'Mecánico', focus: 'Revisión, ejecución y evidencia', phone: '+56933333333', active: true },
+  { id: 'mechanic2', workshopId: DEFAULT_WORKSHOP_ID, email: 'mechanic2@mecanicok.local', name: 'Ana Mecánica', role: 'mechanic', roleLabel: 'Mecánico', focus: 'Diagnóstico avanzado, frenos y tren delantero', phone: '+56944444444', active: true },
 ];
 
 export const taskStatuses = {
@@ -63,16 +63,69 @@ export const taskPriorities = {
 };
 
 export const workflowTargetSteps = {
-  intake: 'Diagnostico inicial',
-  vehicle: 'Vehiculo',
-  reception_photos: 'Fotos recepcion',
+  intake: 'Diagnóstico inicial',
+  vehicle: 'Vehículo',
+  reception_photos: 'Fotos recepción',
   detail_photos: 'Fotos detalle',
   client: 'Cliente',
-  inspection: 'Revision',
-  quote: 'Cotizacion',
+  inspection: 'Revisión',
+  quote: 'Cotización',
   parts: 'Repuestos',
-  execution: 'Ejecucion',
+  execution: 'Ejecución',
   handoff: 'Entrega',
+};
+
+export const workflowStepResponsibilities = {
+  vehicle: {
+    primary: 'mechanic',
+    collaborators: ['coordinator', 'admin', 'ai'],
+    summary: 'El mecánico identifica patente, marca, modelo, año, motor y kilometraje; coordinación/admin pueden completar datos antes o después del ingreso.',
+  },
+  intake: {
+    primary: 'mechanic',
+    collaborators: ['coordinator', 'admin', 'ai'],
+    summary: 'El mecánico registra el relato inicial; la IA puede ordenar síntomas, faltantes y checklist sin reemplazar criterio técnico.',
+  },
+  reception_photos: {
+    primary: 'mechanic',
+    collaborators: ['ai'],
+    summary: 'El mecánico documenta evidencia mínima de recepción: vistas, patente, odómetro y tablero.',
+  },
+  detail_photos: {
+    primary: 'mechanic',
+    collaborators: ['ai'],
+    summary: 'El mecánico agrega fotos de zonas a revisar, daños previos, piezas y evidencia técnica.',
+  },
+  client: {
+    primary: 'coordinator',
+    collaborators: ['admin', 'mechanic', 'ai'],
+    summary: 'Coordinación/admin formalizan datos y consentimiento; el mecánico puede capturarlos en primera visita cuando conversa con el cliente.',
+  },
+  inspection: {
+    primary: 'mechanic',
+    collaborators: ['ai'],
+    summary: 'El mecánico registra hallazgos, severidad, riesgo y recomendación; la IA puede sugerir estructura y faltantes.',
+  },
+  quote: {
+    primary: 'coordinator',
+    collaborators: ['admin', 'mechanic', 'ai'],
+    summary: 'Coordinación/admin preparan y envían cotización; el mecánico aporta diagnóstico, mano de obra, alcance técnico y repuestos probables.',
+  },
+  parts: {
+    primary: 'coordinator',
+    collaborators: ['mechanic', 'admin', 'ai'],
+    summary: 'Coordinación gestiona solicitud y seguimiento; el mecánico valida compatibilidad técnica antes de instalar.',
+  },
+  execution: {
+    primary: 'mechanic',
+    collaborators: ['ai'],
+    summary: 'El mecánico ejecuta, registra notas, evidencia y bloqueos de seguridad.',
+  },
+  handoff: {
+    primary: 'coordinator',
+    collaborators: ['mechanic', 'admin', 'ai'],
+    summary: 'Coordinación/admin cierran comunicación y entrega; el mecánico deja resumen técnico final.',
+  },
 };
 
 export const safetyImpacts = {
@@ -87,7 +140,7 @@ export const safetyReasons = {
   coolant_in_oil: 'Agua/refrigerante en aceite',
   oil_pressure: 'Presion de aceite',
   hydrolock: 'Riesgo hidrolock',
-  timing_failure: 'Distribucion',
+  timing_failure: 'Distribución',
   fuel_leak: 'Fuga combustible',
   other: 'Otro',
 };
@@ -109,7 +162,7 @@ export const statusLabels = {
   quote_sent: 'Enviada',
   waiting_parts: 'Esperando repuestos',
   ready: 'Listo para trabajo',
-  in_progress: 'En ejecucion',
+  in_progress: 'En ejecución',
   ready_delivery: 'Listo para entrega',
   closed: 'Cerrada',
 };
@@ -117,8 +170,8 @@ export const statusLabels = {
 export const partStatuses = {
   pending: 'Pendiente',
   client_buying: 'Compra cliente',
-  mechanic_quote: 'Cotiza mecanico',
-  mechanic_buying: 'Compra mecanico',
+  mechanic_quote: 'Cotiza mecánico',
+  mechanic_buying: 'Compra mecánico',
   in_transit: 'En camino',
   delayed: 'Retrasado',
   received: 'Recibido',
@@ -132,10 +185,10 @@ export const photoTypes = [
   'Lateral izquierdo',
   'Lateral derecho',
   'Patente',
-  'Odometro',
+  'Odómetro',
   'Tablero',
   'Zona a revisar',
-  'Dano previo',
+  'Daño previo',
 ];
 
 export const progressPhotoTypes = [
@@ -147,13 +200,13 @@ export const progressPhotoTypes = [
   'Entrega',
 ];
 
-export const requiredReceptionPhotoTypes = ['Frontal', 'Trasera', 'Lateral izquierdo', 'Lateral derecho', 'Patente', 'Odometro', 'Tablero'];
+export const requiredReceptionPhotoTypes = ['Frontal', 'Trasera', 'Lateral izquierdo', 'Lateral derecho', 'Patente', 'Odómetro', 'Tablero'];
 
 export function defaultQuoteStages() {
   return [
-    { id: 'diagnostic', type: 'diagnostic', title: 'Diagnostico', status: 'required', condition: '', note: '', items: [] },
-    { id: 'transport', type: 'transport', title: 'Traslado', status: 'conditional', condition: 'Si el vehiculo no puede circular', note: '', items: [] },
-    { id: 'probable_repair', type: 'probable_repair', title: 'Reparacion probable', status: 'probable', condition: '', note: '', items: [] },
+    { id: 'diagnostic', type: 'diagnostic', title: 'Diagnóstico', status: 'required', condition: '', note: '', items: [] },
+    { id: 'transport', type: 'transport', title: 'Traslado', status: 'conditional', condition: 'Si el vehículo no puede circular', note: '', items: [] },
+    { id: 'probable_repair', type: 'probable_repair', title: 'Reparación probable', status: 'probable', condition: '', note: '', items: [] },
     { id: 'conditional_additionals', type: 'conditional_additional', title: 'Adicionales condicionados', status: 'conditional', condition: 'Solo si se confirma al desmontar', note: '', items: [] },
   ];
 }
@@ -231,7 +284,7 @@ export const newOrder = () => ({
   quote: {
     schemaVersion: 2,
     stages: defaultQuoteStages(),
-    labor: [{ id: crypto.randomUUID(), name: 'Diagnostico y mano de obra', amount: 0 }],
+    labor: [{ id: crypto.randomUUID(), name: 'Diagnóstico y mano de obra', amount: 0 }],
     parts: [],
     extras: [],
     note: '',
@@ -510,11 +563,11 @@ export const highQualitySeedOrder = () => {
       updatedAt: iso(330),
     },
     internalNotes:
-      'Caso dummy de alta calidad para QA navegador. Cubre recepcion, fotos, datos cliente, revision, cotizacion, repuestos, ejecucion, entrega, tareas, comentarios y eventos.',
+      'Caso dummy de alta calidad para QA navegador. Cubre recepción, fotos, datos cliente, revisión, cotización, repuestos, ejecución, entrega, tareas, comentarios y eventos.',
     intakeText:
-      'Cliente reporta temperatura alta en tacos, olor a refrigerante y mancha bajo el motor despues de estacionar. Indica que ayer rellenaron con agua y siguio circulando 6 km. Solicita diagnostico, reparacion y entrega hoy si hay repuestos.',
+      'Cliente reporta temperatura alta en tacos, olor a refrigerante y mancha bajo el motor después de estacionar. Indica que ayer rellenaron con agua y siguió circulando 6 km. Solicita diagnóstico, reparación y entrega hoy si hay repuestos.',
     aiIntake:
-      'Sintoma principal: sobrecalentamiento con perdida de refrigerante. Prioridad alta. No agendar ejecucion sin validar bomba de agua, mangueras, tapa, termostato, electroventilador y compatibilidad exacta de repuestos usando patente, motor y muestra visual.',
+      'Síntoma principal: sobrecalentamiento con pérdida de refrigerante. Prioridad alta. No agendar ejecución sin validar bomba de agua, mangueras, tapa, termostato, electroventilador y compatibilidad exacta de repuestos usando patente, motor y muestra visual.',
     vehicle: {
       plate: 'JL-RK-48',
       brand: 'Chevrolet',
@@ -539,11 +592,11 @@ export const highQualitySeedOrder = () => {
     },
     photos: [
       photo('Frontal', 'Vista frontal de recepcion', '176b87'),
-      photo('Trasera', 'Parachoques trasero sin danos visibles', '1f7a4d'),
+      photo('Trasera', 'Parachoques trasero sin daños visibles', '1f7a4d'),
       photo('Lateral izquierdo', 'Rayon menor puerta conductor informado', 'a76500'),
-      photo('Lateral derecho', 'Sin danos relevantes', '176b87'),
+      photo('Lateral derecho', 'Sin daños relevantes', '176b87'),
       photo('Patente', 'Patente JLRK48 legible', '10232d'),
-      photo('Odometro', '142.300 km al ingreso', '1f7a4d'),
+      photo('Odómetro', '142.300 km al ingreso', '1f7a4d'),
       photo('Tablero', 'Testigo temperatura reportado por cliente', 'b42318'),
       photo('Zona a revisar', 'Humedad bajo bomba de agua', 'a76500'),
     ],
@@ -556,7 +609,7 @@ export const highQualitySeedOrder = () => {
         symptom: 'Perdida de refrigerante y temperatura alta en tacos.',
         description: 'Fuga activa en zona de bomba de agua. Se observan gotas y marca de refrigerante seco en carcasa.',
         recommendation: 'Cambiar bomba de agua, junta/sello, refrigerante y purgar sistema. Probar temperatura con electroventilador.',
-        customerRisk: 'Si circula asi puede volver a recalentar y provocar dano mayor de motor.',
+        customerRisk: 'Si circula así puede volver a recalentar y provocar daño mayor de motor.',
         quoteMode: 'cotizar',
         safetyImpact: 'no_drive',
         safetyStatus: 'cleared',
@@ -591,7 +644,7 @@ export const highQualitySeedOrder = () => {
       level: 'warning',
       noStart: false,
       summary: 'No circular hasta terminar reparacion y prueba de temperatura.',
-      customerMessage: 'Recomendamos no usar el vehiculo hasta validar la fuga y completar purga del sistema.',
+      customerMessage: 'Recomendamos no usar el vehículo hasta validar la fuga y completar purga del sistema.',
       safetyStatus: 'cleared',
       clearanceNote: 'Temperatura estable tras 18 minutos en ralenti, electroventilador activa y no se detectan fugas visibles.',
       clearedByUserId: 'mechanic',
@@ -706,7 +759,7 @@ export const highQualitySeedOrder = () => {
       inspection:
         'IA estructuro hallazgos: fuga bomba de agua, correa con desgaste y refrigerante diluido. Riesgo cliente: no circular hasta prueba final.',
       quote:
-        'Mensaje cliente: cotizacion clara con mano de obra, repuestos, condiciones y recomendacion de no circular hasta reparar.',
+        'Mensaje cliente: cotización clara con mano de obra, repuestos, condiciones y recomendación de no circular hasta reparar.',
       parts:
         'Mensaje proveedor: Chevrolet Sail 2016, motor 1.4, patente JL-RK-48. Confirmar bomba de agua con junta y correa compatible.',
       handoff:
@@ -766,7 +819,7 @@ export const highQualitySeedOrder = () => {
     events: [
       { id: crypto.randomUUID(), type: 'created', userId: 'admin', message: 'Orden demo QA creada.', meta: {}, createdAt: iso(360) },
       { id: crypto.randomUUID(), type: 'quote_sent', userId: 'coordinator', message: 'Cotizacion enviada al cliente.', meta: { channel: 'whatsapp' }, createdAt: iso(250) },
-      { id: crypto.randomUUID(), type: 'quote_approved', userId: 'coordinator', message: 'Cliente aprueba cotizacion.', meta: { channel: 'whatsapp' }, createdAt: iso(220) },
+      { id: crypto.randomUUID(), type: 'quote_approved', userId: 'coordinator', message: 'Cliente aprueba cotización.', meta: { channel: 'whatsapp' }, createdAt: iso(220) },
       { id: crypto.randomUUID(), type: 'parts_validated', userId: 'mechanic', message: 'Repuestos validados y listos.', meta: {}, createdAt: iso(110) },
       { id: crypto.randomUUID(), type: 'ready_delivery', userId: 'mechanic', message: 'Trabajo listo para entrega.', meta: {}, createdAt: iso(20) },
     ],
@@ -930,8 +983,8 @@ export function generateIntake(order) {
   }[system];
 
   return [
-    `Vehiculo base: ${vehicleSpec(order)}.`,
-    'Regla de compatibilidad: validar marca, modelo, ano, motor/cilindrada y patente antes de sugerir repuestos.',
+    `Vehículo base: ${vehicleSpec(order)}.`,
+    'Regla de compatibilidad: validar marca, modelo, año, motor/cilindrada y patente antes de sugerir repuestos.',
     vehicleHintsText(text),
     '',
     `Sistema probable: ${system}.`,
@@ -942,10 +995,10 @@ export function generateIntake(order) {
     ...checklist.map((item) => `- ${item}`),
     '',
     'Preguntas sugeridas:',
-    '- Cuando ocurre la falla?',
-    '- Se encendio algun testigo?',
-    '- El vehiculo siguio circulando?',
-    '- El cliente compro o comprara repuestos?',
+    '- ¿Cuándo ocurre la falla?',
+    '- ¿Se encendió algún testigo?',
+    '- ¿El vehículo siguió circulando?',
+    '- ¿El cliente compró o comprará repuestos?',
   ].join('\n');
 }
 
@@ -954,7 +1007,7 @@ function vehicleHintsText(text) {
   const entries = [
     hints.brand && `marca ${hints.brand}`,
     hints.model && `modelo ${hints.model}`,
-    hints.year && `ano ${hints.year}`,
+    hints.year && `año ${hints.year}`,
     hints.engine && `motor/cilindrada ${hints.engine}`,
     hints.plate && `patente ${hints.plate}`,
   ].filter(Boolean);
@@ -963,13 +1016,13 @@ function vehicleHintsText(text) {
 
 export function generateInspection(order) {
   const lines = [
-    `Vehiculo considerado: ${vehicleSpec(order)}.`,
-    'Sugerencias IA para la revision:',
+    `Vehículo considerado: ${vehicleSpec(order)}.`,
+    'Sugerencias IA para la revisión:',
   ];
   const allText = `${order.intakeText} ${order.findings.map((finding) => `${finding.description} ${finding.recommendation}`).join(' ')}`.toLowerCase();
   if (criticalSafetyText(allText) || engineSafetyStatus(order).state === 'critical') {
     lines.push('- Si hay agua/refrigerante en aceite o aceite color mayonesa: no encender, no prueba de ruta.');
-    lines.push('- Registrar muestra de varilla/tapa, evaluar contaminacion, presion de sistema y dano interno antes de cualquier arranque.');
+    lines.push('- Registrar muestra de varilla/tapa, evaluar contaminación, presión de sistema y daño interno antes de cualquier arranque.');
   }
   if (allText.includes('bomba') || allText.includes('refrigerante') || allText.includes('agua')) {
     lines.push('- Si cambia bomba de agua, incluir refrigerante nuevo.');
@@ -994,7 +1047,7 @@ export function generateQuoteMessage(order) {
   const stages = quoteStages(order.quote);
   const visibleStages = stages.filter((stage) => stage.note || stage.condition || stage.status !== 'required');
   return [
-    `Hola ${order.client.name || ''}, dejo cotizacion para ${vehicleName(order)}.`,
+    `Hola ${order.client.name || ''}, dejo cotización para ${vehicleName(order)}.`,
     `Datos para compatibilidad: ${vehicleSpec(order)}.`,
     visibleStages.length ? '' : '',
     visibleStages.length ? 'Etapas / condiciones:' : '',
@@ -1012,8 +1065,8 @@ export function generateQuoteMessage(order) {
     `Total estimado: ${money(quoteTotal(order.quote))}`,
     order.quote.note ? `Condicion: ${order.quote.note}` : '',
     '',
-    'Confirme si comprara los repuestos o si desea que los cotice/gestione el mecanico.',
-    'Antes de comprar, validar que cada repuesto corresponda a marca, modelo, ano y motor/cilindrada.',
+    'Confirme si comprará los repuestos o si desea que los cotice/gestione el mecánico.',
+    'Antes de comprar, validar que cada repuesto corresponda a marca, modelo, año y motor/cilindrada.',
   ].filter(Boolean).join('\n');
 }
 
@@ -1025,15 +1078,15 @@ export function generatePartsMessage(order) {
     '',
     ...parts.map((part) => `- ${part.name || 'Repuesto'}: ${partStatuses[part.status] || 'Pendiente'}${part.dueDate ? `, llega ${part.dueDate}` : ''}${part.notes ? `. ${part.notes}` : ''}`),
     '',
-    'Por favor avise si alguno se retrasa, si no lo encuentra o si necesita que el mecanico lo cotice.',
-    'Antes de agendar, envie foto del repuesto para validar marca, modelo, ano, motor/cilindrada y codigo si aplica.',
+    'Por favor avise si alguno se retrasa, si no lo encuentra o si necesita que el mecánico lo cotice.',
+    'Antes de agendar, envíe foto del repuesto para validar marca, modelo, año, motor/cilindrada y código si aplica.',
   ].join('\n');
 }
 
 export function generateDeliverySummary(order) {
   return [
     `Trabajo finalizado para ${vehicleName(order)}.`,
-    `Vehiculo: ${vehicleSpec(order)}.`,
+    `Vehículo: ${vehicleSpec(order)}.`,
     '',
     'Resumen:',
     order.executionNotes || '- Se realizo el trabajo documentado en la orden.',
@@ -1041,13 +1094,13 @@ export function generateDeliverySummary(order) {
     'Hallazgos principales:',
     ...(order.findings.length ? order.findings.map((finding) => `- ${finding.area}: ${finding.description}`) : ['- Sin hallazgos adicionales registrados.']),
     '',
-    'Recomendacion:',
-    'Revisar el comportamiento del vehiculo durante los proximos dias y avisar si aparece ruido, fuga, testigo o temperatura fuera de rango.',
+    'Recomendación:',
+    'Revisar el comportamiento del vehículo durante los próximos días y avisar si aparece ruido, fuga, testigo o temperatura fuera de rango.',
   ].join('\n');
 }
 
 export function clientDataMessage(order) {
-  return `Hola, para completar la orden ${order.number} necesito tus datos de contacto y confirmar datos del vehiculo. Puedes responder por aqui o completar el link enviado.`;
+  return `Hola, para completar la orden ${order.number} necesito tus datos de contacto y confirmar datos del vehículo. Puedes responder por aquí o completar el link enviado.`;
 }
 
 export function quoteTotal(quote) {
@@ -1088,7 +1141,7 @@ export function prepScore(order) {
   const delayed = order.parts.some((part) => ['delayed', 'wrong'].includes(part.status));
   const pending = order.parts.some((part) => ['pending', 'client_buying', 'mechanic_quote', 'mechanic_buying', 'in_transit'].includes(part.status));
   if (missingClient) return { state: 'red', label: 'Bloqueada', detail: 'Faltan datos del cliente.' };
-  if (missingPartTracking) return { state: 'amber', label: 'Pendiente', detail: 'La cotizacion tiene repuestos sin seguimiento.' };
+  if (missingPartTracking) return { state: 'amber', label: 'Pendiente', detail: 'La cotización tiene repuestos sin seguimiento.' };
   if (delayed) return { state: 'red', label: 'Bloqueada', detail: 'Hay repuestos retrasados o incorrectos.' };
   if (pending) return { state: 'amber', label: 'Pendiente', detail: 'Falta confirmar uno o mas repuestos.' };
   return { state: 'green', label: 'Lista', detail: 'Cliente y repuestos listos para agendar.' };
@@ -1152,7 +1205,7 @@ export function engineSafetyStatus(order = {}) {
     return {
       state: 'critical',
       label: 'No encender',
-      detail: risk.summary || 'Posible contaminacion de aceite/refrigerante o dano interno. No arrancar hasta liberar tecnicamente.',
+      detail: risk.summary || 'Posible contaminación de aceite/refrigerante o daño interno. No arrancar hasta liberar técnicamente.',
       blockers,
     };
   }
@@ -1176,14 +1229,14 @@ export function vehicleSpec(order) {
   const spec = [
     order.vehicle.brand && `marca ${order.vehicle.brand}`,
     order.vehicle.model && `modelo ${order.vehicle.model}`,
-    order.vehicle.year && `ano ${order.vehicle.year}`,
+    order.vehicle.year && `año ${order.vehicle.year}`,
     order.vehicle.engine && `motor/cilindrada ${order.vehicle.engine}`,
     order.vehicle.cylinders && `${order.vehicle.cylinders} cilindros`,
     order.vehicle.fuel && `combustible ${order.vehicle.fuel}`,
     order.vehicle.transmission && `transmision ${order.vehicle.transmission}`,
     order.vehicle.plate && `patente ${order.vehicle.plate}`,
   ].filter(Boolean);
-  return spec.length ? spec.join(', ') : 'faltan datos de vehiculo';
+  return spec.length ? spec.join(', ') : 'faltan datos de vehículo';
 }
 
 export function money(value) {

@@ -24,6 +24,7 @@ import {
   seedOrder,
   updateOrderTask,
   vehicleSpec,
+  workflowStepResponsibilities,
   workflowTargetSteps,
   workshopUsers,
 } from '../src/domain.js';
@@ -43,7 +44,7 @@ test('AI intake includes compatibility rule and vehicle spec', () => {
   assert.match(message, /marca Chevrolet/);
   assert.match(message, /modelo Sail/);
   assert.match(message, /motor\/cilindrada 1.4/);
-  assert.match(message, /validar marca, modelo, ano, motor\/cilindrada y patente/);
+  assert.match(message, /validar marca, modelo, año, motor\/cilindrada y patente/);
 });
 
 test('inspection suggestions include related work for cooling jobs', () => {
@@ -55,10 +56,10 @@ test('inspection suggestions include related work for cooling jobs', () => {
 
 test('quote and parts messages preserve vehicle compatibility data', () => {
   const order = seedOrder();
-  assert.match(generateQuoteMessage(order), /Datos para compatibilidad: marca Chevrolet, modelo Sail, ano 2016, motor\/cilindrada 1.4/);
+  assert.match(generateQuoteMessage(order), /Datos para compatibilidad: marca Chevrolet, modelo Sail, año 2016, motor\/cilindrada 1.4/);
   assert.match(generateQuoteMessage(order), /4 cilindros/);
   assert.match(generateQuoteMessage(order), /transmision Manual 5-spd/);
-  assert.match(generatePartsMessage(order), /Compatibilidad: marca Chevrolet, modelo Sail, ano 2016, motor\/cilindrada 1.4/);
+  assert.match(generatePartsMessage(order), /Compatibilidad: marca Chevrolet, modelo Sail, año 2016, motor\/cilindrada 1.4/);
   assert.match(generatePartsMessage(order), /patente AB-CD-12/);
 });
 
@@ -168,14 +169,14 @@ test('critical engine safety blocks readiness and execution until cleared', () =
 
   const cleared = {
     ...base,
-    risk: { ...base.risk, safetyStatus: 'cleared', clearanceNote: 'Aceite drenado sin agua y mecanico autoriza prueba controlada.' },
+    risk: { ...base.risk, safetyStatus: 'cleared', clearanceNote: 'Aceite drenado sin agua y mecánico autoriza prueba controlada.' },
   };
   assert.equal(engineSafetyStatus(cleared).state, 'normal');
   assert.equal(executionGate(cleared).ok, true);
 });
 
 test('vehicleSpec reports missing data clearly', () => {
-  assert.equal(vehicleSpec(newOrder()), 'faltan datos de vehiculo');
+  assert.equal(vehicleSpec(newOrder()), 'faltan datos de vehículo');
 });
 
 test('normalizeWhatsAppPhone handles Chilean mobile numbers', () => {
@@ -231,6 +232,13 @@ test('assignOrder accepts only active workshop users and records an event', () =
   assert.equal(assigned.events.at(-1).type, 'order_assigned');
 
   assert.throws(() => assignOrder(newOrder(), 'usr-unknown', 'coordinator'), /Usuario asignado invalido/);
+});
+
+test('workflow responsibilities cover every step with owner and collaborators', () => {
+  assert.deepEqual(Object.keys(workflowStepResponsibilities).sort(), Object.keys(workflowTargetSteps).sort());
+  assert.equal(workflowStepResponsibilities.inspection.primary, 'mechanic');
+  assert.equal(workflowStepResponsibilities.parts.primary, 'coordinator');
+  assert.ok(workflowStepResponsibilities.quote.collaborators.includes('ai'));
 });
 
 test('tasks enforce valid status, assignee and completion rules', () => {

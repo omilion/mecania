@@ -147,7 +147,7 @@ export async function requireAuth(sessionsPath = defaultAuthSessionsPath, req) {
   const tokenHash = hashBearerToken(token);
   const sessions = await activeSessions(sessionsPath);
   const session = sessions.find((item) => item.tokenHash === tokenHash);
-  if (!session) throw httpError(401, 'Sesion invalida o expirada.');
+  if (!session) throw httpError(401, 'Sesión inválida o expirada.');
   const user = workshopUsers.find((item) => item.active && item.id === session.userId);
   if (!user) throw httpError(401, 'Usuario inactivo.');
   return publicAuthUser(user);
@@ -259,7 +259,7 @@ export async function getClientOrderEvents(ordersPath = defaultOrdersPath, token
     order.quote?.decidedAt && {
       type: order.quote.approved ? 'quote_approved' : order.quote.rejected ? 'quote_rejected' : 'quote_decided',
       at: order.quote.decidedAt,
-      label: 'Decision de cotizacion',
+      label: 'Decisión de cotización',
     },
     order.updatedAt && { type: 'updated', at: order.updatedAt, label: 'Orden actualizada' },
   ].filter(Boolean);
@@ -716,12 +716,12 @@ function findingResultLabel(result) {
 }
 
 function quoteModeLabel(mode) {
-  return ({ cotizar: 'Incluido en cotizacion', incluido: 'Incluido', recomendado: 'Recomendado', no_cotizar: 'Solo informativo' })[mode] || 'Incluido en cotizacion';
+  return ({ cotizar: 'Incluido en cotización', incluido: 'Incluido', recomendado: 'Recomendado', no_cotizar: 'Solo informativo' })[mode] || 'Incluido en cotización';
 }
 
 function customerRiskFallback(severity) {
-  if (severity === 'critico') return 'No recomendamos circular ni encender si existe riesgo de dano mayor.';
-  if (severity === 'alto') return 'Puede causar una falla mayor o dejar el vehiculo detenido.';
+  if (severity === 'critico') return 'No recomendamos circular ni encender si existe riesgo de daño mayor.';
+  if (severity === 'alto') return 'Puede causar una falla mayor o dejar el vehículo detenido.';
   if (severity === 'medio') return 'Conviene resolverlo para evitar desgaste o una segunda visita.';
   return 'Riesgo bajo, mantener observado.';
 }
@@ -737,8 +737,8 @@ async function tryLocalAi(task, order) {
 
 function buildAiPrompt(task, order) {
   return [
-    'Eres un asistente operativo para un taller mecanico en Chile.',
-    'No reemplazas al mecanico; ordenas informacion y redactas mensajes claros.',
+    'Eres un asistente operativo para un taller mecánico en Chile.',
+    'No reemplazas al mecánico; ordenas información y redactas mensajes claros.',
     `Tarea: ${task}.`,
     `Orden JSON: ${JSON.stringify(order)}`,
     'Devuelve solo texto util, sin inventar datos tecnicos ausentes.',
