@@ -5,7 +5,7 @@ import { basename, extname, join, resolve, sep } from 'node:path';
 import { promisify } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { newId, nowIso, readJson, writeJson } from './storage.mjs';
-import { defaultWorkshop, normalizeOrder, permissionsForRole, workshopUsers } from '../src/domain.js';
+import { defaultWorkshop, executionGate, materializeQuoteParts, normalizeOrder, permissionsForRole, workshopUsers } from '../src/domain.js';
 
 export const GEMINI_MODEL = 'gemini-3-flash-preview';
 
@@ -28,7 +28,7 @@ const allowedUploadKinds = new Set(['photo', 'part', 'document', 'progress', 'ot
 const allowedUploadMimes = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf', 'text/plain']);
 const clientPatchKeys = new Set(['client', 'parts', 'quote']);
 const clientFields = ['name', 'phone', 'email', 'address', 'contactConsent'];
-const clientPartFields = ['status', 'dueDate', 'notes', 'price', 'photoDataUrl'];
+const clientPartFields = ['status', 'dueDate', 'notes', 'price', 'photoDataUrl', 'supplier', 'sku', 'quantity'];
 const clientQuoteFields = ['approved', 'rejected', 'customerComment', 'decidedAt'];
 const taskPatchFields = ['id', 'title', 'status', 'priority', 'targetStep', 'assignedTo', 'assignedUserId', 'createdAt', 'updatedAt', 'createdBy', 'createdByUserId', 'completedAt', 'dueDate', 'notes'];
 const commentPatchFields = ['id', 'userId', 'text', 'createdAt'];
@@ -73,11 +73,13 @@ export function createApp(options = {}) {
 
       if (route.name === 'getWorkshop') return sendJson(res, 200, workshopContext(authUser));
       if (route.name === 'listWorkshopUsers') return sendJson(res, 200, { users: workshopUsers.map(publicAuthUser) });
-      if (route.name === 'listOrders') return sendJson(res, 200, await listOrders(ordersPath));
+      if (route.name === 'listOrders') return sendJson(res, 200, await listOrders(ordersPath, Object.fromEntries(url.searchParams.entries())));
+      if (route.name === 'listClients') return sendJson(res, 200, await listClients(ordersPath, Object.fromEntries(url.searchParams.entries())));
+      if (route.name === 'updateClientRecord') return sendJson(res, 200, await updateClientRecord(ordersPath, route.params.id, body?.client || body, authUser));
       if (route.name === 'createOrder') return sendJson(res, 201, await createOrder(ordersPath, tokensPath, body?.order || body, authUser));
       if (route.name === 'getOrder') return sendJson(res, 200, await getOrder(ordersPath, route.params.id));
       if (route.name === 'updateOrder') return sendJson(res, 200, await updateOrder(ordersPath, route.params.id, body?.order || body, req.method === 'PUT', authUser));
-      if (route.name === 'deleteOrder') return sendJson(res, 200, await deleteOrder(ordersPath, tokensPath, route.params.id));
+      if (route.name === 'deleteOrder') return sendJson(res, 200, await deleteOrder(ordersPath, tokensPath, route.params.id, authUser));
       if (route.name === 'createToken') return sendJson(res, 201, await createClientToken(ordersPath, tokensPath, route.params.id, body, env));
       if (route.name === 'getClientOrder') return sendJson(res, 200, await getClientOrder(ordersPath, tokensPath, route.params.token));
       if (route.name === 'getClientOrderEvents') return sendJson(res, 200, await getClientOrderEvents(ordersPath, tokensPath, route.params.token));
@@ -153,9 +155,67 @@ export async function requireAuth(sessionsPath = defaultAuthSessionsPath, req) {
   return publicAuthUser(user);
 }
 
-export async function listOrders(ordersPath = defaultOrdersPath) {
+export async function listOrders(ordersPath = defaultOrdersPath, query = {}) {
+  const normalized = (await readJson(ordersPath, [])).map(normalizeOrder);
+  const search = String(query.search || '').trim();
+  const status = String(query.status || '').trim();
+  const offset = boundedInteger(query.offset, 0, 100000);
+  const limit = boundedInteger(query.limit, 0, 200);
+  const filtered = normalized
+    .filter((order) => matchesOrderStatus(order, status))
+    .filter((order) => matchesOrderSearch(order, search));
+  const paged = limit ? filtered.slice(offset, offset + limit) : filtered.slice(offset);
+  return {
+    orders: paged,
+    total: filtered.length,
+    search,
+    status,
+    offset,
+    limit: limit || filtered.length,
+  };
+}
+
+export async function listClients(ordersPath = defaultOrdersPath, query = {}) {
+  const normalized = (await readJson(ordersPath, [])).map(normalizeOrder);
+  const search = String(query.search || '').trim();
+  const offset = boundedInteger(query.offset, 0, 100000);
+  const limit = boundedInteger(query.limit, 0, 200);
+  const records = clientRecordsFromOrders(normalized);
+  const filtered = search ? records.filter((record) => matchesClientSearch(record, search)) : records;
+  const paged = limit ? filtered.slice(offset, offset + limit) : filtered.slice(offset);
+  return {
+    clients: paged,
+    total: filtered.length,
+    search,
+    offset,
+    limit: limit || filtered.length,
+  };
+}
+
+export async function updateClientRecord(ordersPath = defaultOrdersPath, id, input = {}, authUser = null) {
+  assertObject(input, 'El cliente debe ser un objeto JSON.');
+  const patch = pick(input, clientFields);
+  if (!Object.keys(patch).length) throw httpError(400, 'No hay campos de cliente para actualizar.');
   const orders = await readJson(ordersPath, []);
-  return { orders: orders.map(normalizeOrder) };
+  const timestamp = nowIso();
+  const touchedOrderIds = [];
+  const nextOrders = orders.map((rawOrder) => {
+    const current = normalizeOrder(rawOrder);
+    if (clientRecordId(current.client) !== id) return rawOrder;
+    touchedOrderIds.push(current.id);
+    const next = normalizeOrder({
+      ...current,
+      client: { ...current.client, ...patch },
+      updatedAt: timestamp,
+      updatedByUserId: authUser?.id || current.updatedByUserId,
+    });
+    return withServerEvents(current, next, authUser);
+  });
+  if (!touchedOrderIds.length) throw httpError(404, 'Cliente no encontrado.');
+  await writeJson(ordersPath, nextOrders);
+  const clients = clientRecordsFromOrders(nextOrders.map(normalizeOrder));
+  const client = clients.find((record) => record.orderIds.some((orderId) => touchedOrderIds.includes(orderId)));
+  return { client, updatedOrders: touchedOrderIds.length };
 }
 
 export async function createOrder(ordersPath = defaultOrdersPath, tokensPath = defaultTokensPath, input = {}, authUser = null) {
@@ -163,7 +223,7 @@ export async function createOrder(ordersPath = defaultOrdersPath, tokensPath = d
   const timestamp = nowIso();
   const actorId = authUser?.id || input.createdByUserId || 'admin';
   const actorRole = authUser?.role || 'admin';
-  const order = normalizeOrder({
+  let order = normalizeOrder({
     id: input.id || newId('ord'),
     number: input.number || `MO-${String(Date.now()).slice(-6)}`,
     status: input.status || 'intake',
@@ -179,6 +239,8 @@ export async function createOrder(ordersPath = defaultOrdersPath, tokensPath = d
     comments: sanitizeComments(input.comments),
     events: sanitizeEvents(input.events),
   });
+  assertReadyDeliveryGate(normalizeOrder({}), order);
+  order = withServerEvents(normalizeOrder({}), order, authUser || { id: actorId });
 
   const orders = await readJson(ordersPath, []);
   if (orders.some((existing) => existing.id === order.id)) throw httpError(409, 'Ya existe una orden con ese id.');
@@ -204,29 +266,44 @@ export async function updateOrder(ordersPath = defaultOrdersPath, id, patch = {}
 
   const current = normalizeOrder(orders[index]);
   const sanitizedPatch = sanitizeOrderPatch(patch);
+  const authorizedPatch = scopeOrderPatchForRole(current, sanitizedPatch, authUser, replace);
   const next = replace
-    ? normalizeOrder({ ...sanitizedPatch, id: current.id, createdAt: current.createdAt || nowIso() })
-    : normalizeOrder(mergeOrder(current, sanitizedPatch));
+    ? normalizeOrder({ ...authorizedPatch, id: current.id, createdAt: current.createdAt || nowIso() })
+    : normalizeOrder(mergeOrder(current, authorizedPatch));
   if (authUser?.id) {
     next.updatedByUserId = authUser.id;
     next.workshopId = current.workshopId || authUser.workshopId || defaultWorkshop.id;
-    if (next.status !== current.status) next.statusChangedByUserId = authUser.id;
+    if (next.status !== current.status) {
+      next.statusChangedByUserId = authUser.id;
+      next.statusChangedAt = nowIso();
+    }
   }
   next.updatedAt = nowIso();
-  orders[index] = next;
+  assertReadyDeliveryGate(current, next);
+  orders[index] = withServerEvents(current, next, authUser);
   await writeJson(ordersPath, orders);
-  return { order: next };
+  return { order: orders[index] };
 }
 
-export async function deleteOrder(ordersPath = defaultOrdersPath, tokensPath = defaultTokensPath, id) {
+export async function deleteOrder(ordersPath = defaultOrdersPath, tokensPath = defaultTokensPath, id, authUser = null) {
   const orders = await readJson(ordersPath, []);
-  const nextOrders = orders.filter((item) => item.id !== id);
-  if (nextOrders.length === orders.length) throw httpError(404, 'Orden no encontrada.');
-  await writeJson(ordersPath, nextOrders);
-
-  const tokens = await readJson(tokensPath, []);
-  await writeJson(tokensPath, tokens.filter((item) => item.orderId !== id));
-  return { ok: true };
+  const index = orders.findIndex((item) => item.id === id);
+  if (index === -1) throw httpError(404, 'Orden no encontrada.');
+  const current = normalizeOrder(orders[index]);
+  const timestamp = nowIso();
+  const archived = {
+    ...current,
+    status: 'archived',
+    archivedAt: current.archivedAt || timestamp,
+    deletedAt: current.deletedAt || timestamp,
+    updatedAt: timestamp,
+    updatedByUserId: authUser?.id || current.updatedByUserId,
+    statusChangedByUserId: authUser?.id || current.statusChangedByUserId,
+    statusChangedAt: timestamp,
+  };
+  orders[index] = withServerEvents(current, archived, authUser);
+  await writeJson(ordersPath, orders);
+  return { ok: true, archived: true, order: orders[index] };
 }
 
 export async function createClientToken(ordersPath = defaultOrdersPath, tokensPath = defaultTokensPath, orderId, input = {}, env = process.env) {
@@ -252,7 +329,7 @@ export async function getClientOrder(ordersPath = defaultOrdersPath, tokensPath 
 export async function getClientOrderEvents(ordersPath = defaultOrdersPath, tokensPath = defaultTokensPath, tokenValue) {
   const token = await findValidToken(tokensPath, tokenValue);
   const { order } = await getOrder(ordersPath, token.orderId);
-  const events = [
+  const syntheticEvents = [
     order.createdAt && { type: 'created', at: order.createdAt, label: 'Orden creada' },
     order.statusChangedAt && { type: 'status_changed', at: order.statusChangedAt, status: order.status, label: 'Estado actualizado' },
     order.quote?.sentAt && { type: 'quote_sent', at: order.quote.sentAt, label: 'Cotizacion enviada' },
@@ -263,6 +340,12 @@ export async function getClientOrderEvents(ordersPath = defaultOrdersPath, token
     },
     order.updatedAt && { type: 'updated', at: order.updatedAt, label: 'Orden actualizada' },
   ].filter(Boolean);
+  const eventHistory = sanitizedClientEvents(order.events || []);
+  const eventTypes = new Set(eventHistory.map((event) => event.type));
+  const events = [
+    ...eventHistory,
+    ...syntheticEvents.filter((event) => !eventTypes.has(event.type)),
+  ].sort((a, b) => String(a.at || '').localeCompare(String(b.at || '')));
 
   return {
     orderId: order.id,
@@ -279,11 +362,13 @@ export async function updateClientOrder(ordersPath = defaultOrdersPath, tokensPa
   const token = await findValidToken(tokensPath, tokenValue);
   const ignored = Object.keys(input).filter((key) => !clientPatchKeys.has(key));
   const orders = await readJson(ordersPath, []);
-  const current = orders.find((item) => item.id === token.orderId);
-  if (!current) throw httpError(404, 'Orden no encontrada.');
+  const rawCurrent = orders.find((item) => item.id === token.orderId);
+  if (!rawCurrent) throw httpError(404, 'Orden no encontrada.');
+  const current = normalizeOrder(rawCurrent);
+  assertClientMutationAllowed(current);
 
   const allowed = sanitizeClientPatch(current, input);
-  const { order } = await updateOrder(ordersPath, token.orderId, allowed, false);
+  const { order } = await updateOrder(ordersPath, token.orderId, allowed, false, { id: 'client', source: 'client' });
   return { order: clientOrderView(order), ignored };
 }
 
@@ -396,7 +481,7 @@ function routeRequest(method, pathname) {
   if (method === 'GET' && pathname === '/health') return { name: 'health', params: {} };
   if (method === 'GET' && parts[0] === 'uploads' && parts.length === 2) return { name: 'uploadFile', params: { file: parts[1] } };
   const apiParts = parts[0] === 'api' ? parts.slice(1) : parts;
-  if (!['auth', 'workshop', 'orders', 'client', 'uploads', 'ai'].includes(apiParts[0])) return null;
+  if (!['auth', 'workshop', 'orders', 'clients', 'client', 'uploads', 'ai'].includes(apiParts[0])) return null;
 
   if (apiParts[0] === 'auth' && apiParts[1] === 'login' && apiParts.length === 2 && method === 'POST') return { name: 'login', params: {}, public: true };
   if (apiParts[0] === 'auth' && apiParts[1] === 'me' && apiParts.length === 2 && method === 'GET') return { name: 'me', params: {} };
@@ -408,6 +493,8 @@ function routeRequest(method, pathname) {
   if (apiParts[0] === 'orders' && apiParts.length === 2 && method === 'GET') return { name: 'getOrder', params: { id: apiParts[1] } };
   if (apiParts[0] === 'orders' && apiParts.length === 2 && ['PATCH', 'PUT'].includes(method)) return { name: 'updateOrder', params: { id: apiParts[1] } };
   if (apiParts[0] === 'orders' && apiParts.length === 2 && method === 'DELETE') return { name: 'deleteOrder', params: { id: apiParts[1] } };
+  if (apiParts[0] === 'clients' && apiParts.length === 1 && method === 'GET') return { name: 'listClients', params: {} };
+  if (apiParts[0] === 'clients' && apiParts.length === 2 && ['PATCH', 'PUT'].includes(method)) return { name: 'updateClientRecord', params: { id: apiParts[1] } };
   if (apiParts[0] === 'orders' && apiParts.length === 3 && apiParts[2] === 'client-token' && method === 'POST') {
     return { name: 'createToken', params: { id: apiParts[1] } };
   }
@@ -508,6 +595,115 @@ async function readableFile(filePath) {
   }
 }
 
+function boundedInteger(value, min, max) {
+  const parsed = Number.parseInt(value ?? '', 10);
+  if (!Number.isFinite(parsed)) return min;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+function matchesOrderStatus(order, status) {
+  const archived = Boolean(order.archivedAt || order.deletedAt || order.status === 'archived');
+  if (status === 'archived') return archived;
+  if (archived) return false;
+  if (!status || status === 'all') return true;
+  if (status === 'active') return order.status !== 'closed';
+  if (status === 'quote') return order.status === 'quote_draft' || order.status === 'quote_sent';
+  return order.status === status;
+}
+
+function matchesOrderSearch(order, search) {
+  if (!search) return true;
+  const haystack = normalizeSearchText([
+    order.id,
+    order.number,
+    order.client?.name,
+    order.client?.phone,
+    order.client?.email,
+    order.vehicle?.plate,
+    order.vehicle?.make,
+    order.vehicle?.brand,
+    order.vehicle?.model,
+    order.vehicle?.year,
+    order.vehicle?.engine,
+    order.vehicle?.engineCode,
+    order.vehicle?.vin,
+    order.vehicle?.oemCodes,
+    order.billing?.documentNumber,
+  ].filter(Boolean).join(' '));
+  const needle = normalizeSearchText(search);
+  const compactHaystack = haystack.replace(/[^a-z0-9]/g, '');
+  const compactNeedle = needle.replace(/[^a-z0-9]/g, '');
+  return haystack.includes(needle) || (compactNeedle && compactHaystack.includes(compactNeedle));
+}
+
+function clientRecordsFromOrders(orders = []) {
+  const records = new Map();
+  for (const order of orders) {
+    const client = order.client || {};
+    const id = clientRecordId(client);
+    if (!id) continue;
+    const record = records.get(id) || {
+      id,
+      name: client.name || '',
+      phone: client.phone || '',
+      email: client.email || '',
+      address: client.address || '',
+      contactConsent: client.contactConsent !== false,
+      orderIds: [],
+      orderNumbers: [],
+      vehiclePlates: [],
+      openOrders: 0,
+      closedOrders: 0,
+      archivedOrders: 0,
+      lastOrderAt: '',
+    };
+    if (!record.name && client.name) record.name = client.name;
+    if (!record.phone && client.phone) record.phone = client.phone;
+    if (!record.email && client.email) record.email = client.email;
+    if (!record.address && client.address) record.address = client.address;
+    record.contactConsent = record.contactConsent && client.contactConsent !== false;
+    record.orderIds.push(order.id);
+    if (order.number) record.orderNumbers.push(order.number);
+    if (order.vehicle?.plate && !record.vehiclePlates.includes(order.vehicle.plate)) record.vehiclePlates.push(order.vehicle.plate);
+    if (order.status === 'archived' || order.archivedAt || order.deletedAt) record.archivedOrders += 1;
+    else if (order.status === 'closed') record.closedOrders += 1;
+    else record.openOrders += 1;
+    const lastAt = order.updatedAt || order.createdAt || '';
+    if (lastAt > record.lastOrderAt) record.lastOrderAt = lastAt;
+    records.set(id, record);
+  }
+  return [...records.values()].sort((left, right) => String(right.lastOrderAt || '').localeCompare(String(left.lastOrderAt || '')));
+}
+
+function matchesClientSearch(record, search) {
+  const haystack = normalizeSearchText([
+    record.name,
+    record.phone,
+    record.email,
+    record.address,
+    ...record.orderNumbers,
+    ...record.vehiclePlates,
+  ].filter(Boolean).join(' '));
+  const needle = normalizeSearchText(search);
+  const compactHaystack = haystack.replace(/[^a-z0-9]/g, '');
+  const compactNeedle = needle.replace(/[^a-z0-9]/g, '');
+  return haystack.includes(needle) || (compactNeedle && compactHaystack.includes(compactNeedle));
+}
+
+function clientRecordId(client = {}) {
+  const rawKey = client.phone || client.email || client.name || '';
+  const normalized = normalizeSearchText(rawKey).replace(/[^a-z0-9]/g, '');
+  if (!normalized) return '';
+  return createHash('sha256').update(normalized).digest('hex').slice(0, 16);
+}
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
 function sanitizeClientPatch(current, input) {
   const allowed = {};
   if ('client' in input) {
@@ -515,7 +711,8 @@ function sanitizeClientPatch(current, input) {
     allowed.client = pick(input.client, clientFields);
   }
   if ('parts' in input) {
-    allowed.parts = sanitizeClientParts(current.parts || [], input.parts);
+    const currentParts = current.parts?.length ? current.parts : materializeQuoteParts(current.quote?.parts || [], []);
+    allowed.parts = sanitizeClientParts(currentParts, input.parts);
   }
   if ('quote' in input) {
     assertObject(input.quote, 'quote debe ser un objeto JSON.');
@@ -526,10 +723,138 @@ function sanitizeClientPatch(current, input) {
 
 function sanitizeOrderPatch(patch) {
   const next = { ...patch };
+  if ('events' in next) throw httpError(403, 'Los eventos son append-only y los genera el servidor.');
   if ('tasks' in next) next.tasks = sanitizeTasks(next.tasks);
   if ('comments' in next) next.comments = sanitizeComments(next.comments);
-  if ('events' in next) next.events = sanitizeEvents(next.events);
   return next;
+}
+
+const mechanicEditableKeys = new Set([
+  'intakeText',
+  'aiIntake',
+  'vehicle',
+  'photos',
+  'findings',
+  'risk',
+  'executionNotes',
+  'progressPhotos',
+  'tasks',
+  'aiMessages',
+  'status',
+  'updatedAt',
+  'updatedByUserId',
+  'statusChangedAt',
+  'statusChangedByUserId',
+]);
+
+const coordinatorEditableKeys = new Set([
+  ...mechanicEditableKeys,
+  'client',
+  'quote',
+  'billing',
+  'parts',
+  'finalNotes',
+  'internalNotes',
+  'tasks',
+  'comments',
+  'events',
+  'assignments',
+  'assignedTo',
+  'assignedAt',
+  'assignedBy',
+  'assignedUserId',
+  'coordinatorUserId',
+  'createdByUserId',
+  'priority',
+  'promisedAt',
+  'status',
+]);
+
+const mechanicAllowedStatuses = new Set(['intake', 'visual_record', 'inspection', 'ready', 'in_progress', 'ready_delivery']);
+const mechanicTaskEditableKeys = new Set(['id', 'status', 'notes', 'completedAt']);
+const serverManagedOrderPatchKeys = new Set(['updatedAt', 'updatedByUserId', 'statusChangedAt', 'statusChangedByUserId']);
+const readyDeliveryStatuses = new Set(['ready_delivery', 'closed']);
+const clientLockedStatuses = new Set(['closed', 'archived']);
+
+function assertReadyDeliveryGate(current, next) {
+  if (!readyDeliveryStatuses.has(next.status) || next.status === current.status) return;
+  const gate = executionGate(next);
+  if (!gate.ok) throw httpError(409, `La orden no esta lista para entrega: ${gate.blockers.join('; ')}.`);
+}
+
+function assertClientMutationAllowed(order) {
+  if (clientLockedStatuses.has(order.status) || order.archivedAt || order.deletedAt) {
+    throw httpError(403, 'El link de cliente es de solo lectura para ordenes cerradas o archivadas.');
+  }
+}
+
+function scopeOrderPatchForRole(current, patch = {}, authUser = {}, replace = false) {
+  assertOrderUpdateAllowed(current, patch, authUser, replace);
+  const scoped = authUser?.role && authUser.role !== 'admin'
+    ? omitKeys(patch, serverManagedOrderPatchKeys)
+    : patch;
+  if (authUser?.role !== 'mechanic' || !('tasks' in scoped)) return scoped;
+  return {
+    ...scoped,
+    tasks: mergeMechanicTaskPatch(current.tasks || [], scoped.tasks, authUser.id),
+  };
+}
+
+function assertOrderUpdateAllowed(current, patch = {}, authUser = {}, replace = false) {
+  if (!authUser?.role || authUser.role === 'admin') return;
+  const role = authUser.role;
+  if (role === 'mechanic' && replace) throw httpError(403, 'Tu rol no puede reemplazar una orden completa.');
+  const changed = changedTopLevelKeys(current, patch);
+  if (!changed.length) return;
+  const allowed = role === 'coordinator' ? coordinatorEditableKeys : mechanicEditableKeys;
+  const forbidden = changed.filter((key) => !allowed.has(key));
+  if (forbidden.length) throw httpError(403, `Tu rol no puede modificar: ${forbidden.join(', ')}.`);
+
+  if (role === 'mechanic') {
+    if ('status' in patch && patch.status !== current.status && !mechanicAllowedStatuses.has(patch.status)) {
+      throw httpError(403, 'Tu rol no puede cambiar la orden a ese estado.');
+    }
+    if ('quote' in patch && !sameJson(patch.quote, current.quote)) throw httpError(403, 'Tu rol no puede modificar la cotizacion.');
+    if ('parts' in patch && !sameJson(patch.parts, current.parts)) throw httpError(403, 'Tu rol no puede modificar repuestos administrativos.');
+    if ('finalNotes' in patch && patch.finalNotes !== current.finalNotes && patch.status !== 'ready_delivery') {
+      throw httpError(403, 'Tu rol no puede cerrar la entrega administrativa.');
+    }
+    if ('tasks' in patch) assertMechanicTaskPatchAllowed(current.tasks || [], patch.tasks, authUser.id);
+  }
+}
+
+function assertMechanicTaskPatchAllowed(currentTasks = [], incomingTasks = [], userId = '') {
+  if (!Array.isArray(incomingTasks)) throw httpError(400, 'tasks debe ser un arreglo.');
+  const currentById = new Map(currentTasks.map((task) => [String(task.id || ''), task]));
+  for (const task of incomingTasks) {
+    const taskId = String(task.id || '');
+    const current = currentById.get(taskId);
+    if (!current) throw httpError(403, 'Tu rol no puede crear tareas.');
+    if (![current.assignedUserId, current.assignedTo].includes(userId)) throw httpError(403, 'Tu rol solo puede actualizar tareas asignadas.');
+    const changed = Object.keys(task).filter((key) => !sameJson(task[key], current[key]));
+    const forbidden = changed.filter((key) => !mechanicTaskEditableKeys.has(key));
+    if (forbidden.length) throw httpError(403, `Tu rol no puede modificar tareas: ${forbidden.join(', ')}.`);
+  }
+}
+
+function mergeMechanicTaskPatch(currentTasks = [], incomingTasks = [], userId = '') {
+  const byId = new Map(incomingTasks.map((task) => [String(task.id || ''), task]));
+  return currentTasks.map((task) => {
+    const incoming = byId.get(String(task.id || ''));
+    if (!incoming || ![task.assignedUserId, task.assignedTo].includes(userId)) return task;
+    return { ...task, ...pick(incoming, [...mechanicTaskEditableKeys]), id: task.id };
+  });
+}
+
+function changedTopLevelKeys(current = {}, patch = {}) {
+  return Object.keys(patch || {}).filter((key) => {
+    if (['id', 'createdAt', 'workshopId', 'number'].includes(key) || serverManagedOrderPatchKeys.has(key)) return false;
+    return !sameJson(patch[key], current[key]);
+  });
+}
+
+function sameJson(a, b) {
+  return JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
 }
 
 function authorizeRoute(route, authUser = {}) {
@@ -541,6 +866,68 @@ function authorizeRoute(route, authUser = {}) {
   if (!permission) return;
   if (authUser?.permissions?.[permission]) return;
   throw httpError(403, 'Tu rol no tiene permiso para esta accion.');
+}
+
+function withServerEvents(current, next, authUser = {}) {
+  let order = next;
+  const actorId = authUser?.id || next.updatedByUserId || '';
+  const source = authUser?.source || (authUser?.role === 'client' ? 'client' : 'internal');
+  const now = next.updatedAt || nowIso();
+  const quoteWasSent = Boolean(current.quote?.sent || current.quote?.sentAt || current.status === 'quote_sent');
+  const quoteIsSent = Boolean(next.quote?.sent || next.quote?.sentAt || next.status === 'quote_sent');
+  if (quoteIsSent && !quoteWasSent) {
+    order = {
+      ...order,
+      quote: { ...order.quote, sent: true, sentAt: order.quote.sentAt || now },
+    };
+    order = appendServerEvent(order, 'quote_sent', actorId, 'Cotizacion marcada como enviada.', { channel: 'manual' }, now);
+  }
+  if (next.quote?.approved && !current.quote?.approved) {
+    const decidedAt = next.quote.decidedAt || now;
+    order = {
+      ...order,
+      quote: { ...order.quote, approved: true, rejected: false, decidedAt },
+    };
+    order = appendServerEvent(order, 'quote_approved', actorId, 'Cotizacion aprobada.', { source }, decidedAt);
+  }
+  if (next.quote?.rejected && !current.quote?.rejected) {
+    const decidedAt = next.quote.decidedAt || now;
+    order = {
+      ...order,
+      quote: { ...order.quote, approved: false, rejected: true, decidedAt },
+    };
+    order = appendServerEvent(order, 'quote_rejected', actorId, 'Cotizacion rechazada.', { source }, decidedAt);
+  }
+  if (next.status !== current.status) {
+    order = appendServerEvent(order, 'status_changed', actorId, `Estado actualizado a ${next.status}.`, { from: current.status, to: next.status }, now);
+  }
+  if (next.status === 'closed' && current.status !== 'closed') {
+    order = { ...order, closedAt: order.closedAt || now };
+    order = appendServerEvent(order, 'order_closed', actorId, 'Orden cerrada.', {}, now);
+  }
+  if (next.status === 'archived' && current.status !== 'archived') {
+    order = appendServerEvent(order, 'order_archived', actorId, 'Orden archivada.', {}, now);
+  }
+  return order;
+}
+
+function appendServerEvent(order, type, userId, message, meta = {}, createdAt = nowIso()) {
+  const duplicate = (order.events || []).some((event) => event.type === type && event.createdAt === createdAt && event.message === message);
+  if (duplicate) return order;
+  return {
+    ...order,
+    events: [
+      ...(order.events || []),
+      {
+        id: newId('evt'),
+        type,
+        userId: workshopUsers.some((user) => user.id === userId) ? userId : '',
+        message,
+        meta,
+        createdAt,
+      },
+    ],
+  };
 }
 
 function workshopContext(authUser = {}) {
@@ -584,9 +971,13 @@ function sanitizeEvents(events) {
 
 function sanitizeClientParts(currentParts, incomingParts) {
   if (!Array.isArray(incomingParts)) throw httpError(400, 'parts debe ser un arreglo.');
-  const byId = new Map(incomingParts.filter(isObject).map((part) => [String(part.id || ''), part]));
+  const byKey = new Map();
+  for (const part of incomingParts.filter(isObject)) {
+    if (part.id) byKey.set(String(part.id), part);
+    if (part.name) byKey.set(String(part.name).toLowerCase(), part);
+  }
   return currentParts.map((part) => {
-    const incoming = byId.get(String(part.id || ''));
+    const incoming = byKey.get(String(part.id || '')) || byKey.get(String(part.name || '').toLowerCase());
     if (!incoming) return part;
     return { ...part, ...pick(incoming, clientPartFields), id: part.id, name: part.name, owner: part.owner };
   });
@@ -640,6 +1031,7 @@ function mergeOrder(current, patch) {
     vehicle: isObject(patch.vehicle) ? { ...(current.vehicle || {}), ...patch.vehicle } : current.vehicle,
     client: isObject(patch.client) ? { ...(current.client || {}), ...patch.client } : current.client,
     quote: isObject(patch.quote) ? { ...(current.quote || {}), ...patch.quote } : current.quote,
+    billing: isObject(patch.billing) ? { ...(current.billing || {}), ...patch.billing } : current.billing,
   };
 }
 
@@ -680,6 +1072,41 @@ function clientOrderView(order) {
     ...pick(order, ['id', 'number', 'status', 'updatedAt', 'vehicle', 'client', 'parts', 'quote', 'risk', 'finalNotes']),
     customerFindings: safeCustomerFindings(order.findings || []),
   };
+}
+
+function sanitizedClientEvents(events = []) {
+  if (!Array.isArray(events)) return [];
+  return events
+    .filter(isObject)
+    .map((event) => {
+      const createdAt = String(event.createdAt || event.at || '');
+      const type = String(event.type || '').trim();
+      if (!type || !createdAt) return null;
+      const meta = isObject(event.meta) ? event.meta : {};
+      return {
+        id: String(event.id || ''),
+        type,
+        at: createdAt,
+        createdAt,
+        label: clientEventLabel(type),
+        message: String(event.message || '').replace(/<[^>]*>/g, '').trim().slice(0, 500),
+        userId: workshopUsers.some((user) => user.id === event.userId) ? event.userId : '',
+        source: meta.source === 'client' ? 'client' : 'internal',
+        meta,
+      };
+    })
+    .filter(Boolean);
+}
+
+function clientEventLabel(type) {
+  return ({
+    quote_sent: 'Cotizacion enviada',
+    quote_approved: 'Cotizacion aprobada',
+    quote_rejected: 'Cotizacion rechazada',
+    status_changed: 'Estado actualizado',
+    order_closed: 'Orden cerrada',
+    order_archived: 'Orden archivada',
+  })[type] || 'Evento registrado';
 }
 
 function clientTokenUrl(tokenValue, baseUrl = '') {
@@ -930,6 +1357,11 @@ function pick(source, keys) {
     if (key in source) acc[key] = source[key];
     return acc;
   }, {});
+}
+
+function omitKeys(source, keys) {
+  if (!isObject(source)) return {};
+  return Object.fromEntries(Object.entries(source).filter(([key]) => !keys.has(key)));
 }
 
 function httpError(status, message) {

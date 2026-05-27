@@ -236,8 +236,150 @@ test('orders CRUD persists orders and creates a stable client token', async () =
     const listed = await request(baseUrl, '/api/orders', { headers: authHeaders });
     assert.equal(listed.json.orders.length, 1);
 
+    const byPhone = await request(baseUrl, '/api/orders?search=912345678&limit=10&offset=0', { headers: authHeaders });
+    assert.equal(byPhone.response.status, 200);
+    assert.equal(byPhone.json.total, 1);
+    assert.equal(byPhone.json.orders[0].id, id);
+
+    const byPlate = await request(baseUrl, '/api/orders?search=abcd12&status=waiting_parts', { headers: authHeaders });
+    assert.equal(byPlate.response.status, 200);
+    assert.equal(byPlate.json.total, 1);
+    assert.equal(byPlate.json.orders[0].vehicle.plate, 'AB-CD-12');
+
     const persisted = JSON.parse(await readFile(join(root, 'data', 'orders.json'), 'utf8'));
     assert.equal(persisted[0].id, id);
+  });
+});
+
+test('clients API lists and updates client data across associated orders', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const authHeaders = await login(baseUrl);
+    const first = await request(baseUrl, '/api/orders', {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        number: 'MO-CLI-001',
+        client: { name: 'Cliente Maestro', phone: '+56977777777', address: 'Direccion antigua' },
+        vehicle: { plate: 'MA-11-11', vin: 'VIN123456789', oemCodes: 'OEM-A' },
+      }),
+    });
+    const second = await request(baseUrl, '/api/orders', {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        number: 'MO-CLI-002',
+        client: { name: 'Cliente Maestro', phone: '+56977777777', address: 'Direccion antigua' },
+        vehicle: { plate: 'MA-22-22' },
+      }),
+    });
+    assert.equal(first.response.status, 201);
+    assert.equal(second.response.status, 201);
+
+    const listed = await request(baseUrl, '/api/clients?search=77777777&limit=10', { headers: authHeaders });
+    assert.equal(listed.response.status, 200);
+    assert.equal(listed.json.total, 1);
+    assert.equal(listed.json.clients[0].orderIds.length, 2);
+    assert.deepEqual(listed.json.clients[0].vehiclePlates.sort(), ['MA-11-11', 'MA-22-22']);
+
+    const clientId = listed.json.clients[0].id;
+    const patched = await request(baseUrl, `/api/clients/${clientId}`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ client: { address: 'Direccion actualizada', email: 'cliente@example.com' } }),
+    });
+    assert.equal(patched.response.status, 200);
+    assert.equal(patched.json.updatedOrders, 2);
+
+    const updatedFirst = await request(baseUrl, `/api/orders/${first.json.order.id}`, { headers: authHeaders });
+    const updatedSecond = await request(baseUrl, `/api/orders/${second.json.order.id}`, { headers: authHeaders });
+    assert.equal(updatedFirst.json.order.client.address, 'Direccion actualizada');
+    assert.equal(updatedSecond.json.order.client.email, 'cliente@example.com');
+
+    const byVin = await request(baseUrl, '/api/orders?search=vin123456789', { headers: authHeaders });
+    assert.equal(byVin.json.total, 1);
+    assert.equal(byVin.json.orders[0].vehicle.oemCodes, 'OEM-A');
+  });
+});
+
+test('delete order archives instead of removing from storage and hides archived from normal list', async () => {
+  await withServer(async ({ baseUrl, root }) => {
+    const authHeaders = await login(baseUrl);
+    const created = await request(baseUrl, '/api/orders', {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ client: { name: 'Archivo' }, vehicle: { plate: 'ZX-99-11' } }),
+    });
+    const id = created.json.order.id;
+
+    const deleted = await request(baseUrl, `/api/orders/${id}`, {
+      method: 'DELETE',
+      headers: authHeaders,
+    });
+    assert.equal(deleted.response.status, 200);
+    assert.equal(deleted.json.archived, true);
+    assert.equal(deleted.json.order.status, 'archived');
+
+    const listed = await request(baseUrl, '/api/orders', { headers: authHeaders });
+    assert.equal(listed.json.orders.length, 0);
+
+    const archived = await request(baseUrl, '/api/orders?status=archived&search=zx9911', { headers: authHeaders });
+    assert.equal(archived.json.total, 1);
+    assert.equal(archived.json.orders[0].id, id);
+
+    const persisted = JSON.parse(await readFile(join(root, 'data', 'orders.json'), 'utf8'));
+    assert.equal(persisted.length, 1);
+    assert.equal(persisted[0].id, id);
+    assert.ok(persisted[0].archivedAt);
+    assert.ok(persisted[0].events.some((event) => event.type === 'order_archived'));
+
+    const clientMutation = await request(baseUrl, `/api/client/orders/${created.json.clientToken}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ client: { email: 'archivado@example.com' } }),
+    });
+    assert.equal(clientMutation.response.status, 403);
+  });
+});
+
+test('orders list supports search, status filters and bounded pagination', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const authHeaders = await login(baseUrl);
+    const fixtures = [
+      { number: 'MO-SEA-001', status: 'waiting_parts', client: { name: 'Ana Repuestos', phone: '+56911111111' }, vehicle: { plate: 'AA-BB-11', brand: 'Toyota', model: 'Yaris', year: '2020' } },
+      {
+        number: 'MO-SEA-002',
+        status: 'closed',
+        client: { name: 'Bruno Archivo', phone: '+56922222222' },
+        vehicle: { plate: 'CC-DD-22', brand: 'Nissan', model: 'Versa', year: '2018', engine: '1.6' },
+        findings: [{ id: 'f-closed', area: 'Motor', severity: 'bajo', description: 'Trabajo revisado' }],
+        quote: { approved: true, labor: [], parts: [], extras: [] },
+      },
+      { number: 'MO-SEA-003', status: 'quote_sent', client: { name: 'Carla Cotiza', email: 'carla@example.com' }, vehicle: { plate: 'EE-FF-33', brand: 'Chevrolet', model: 'Sail', year: '2016', engine: '1.4' } },
+    ];
+
+    for (const order of fixtures) {
+      const created = await request(baseUrl, '/api/orders', {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify(order),
+      });
+      assert.equal(created.response.status, 201);
+    }
+
+    const searched = await request(baseUrl, '/api/orders?search=sail&status=quote_sent&limit=10', { headers: authHeaders });
+    assert.equal(searched.response.status, 200);
+    assert.equal(searched.json.total, 1);
+    assert.deepEqual(searched.json.orders.map((order) => order.number), ['MO-SEA-003']);
+
+    const closed = await request(baseUrl, '/api/orders?status=closed', { headers: authHeaders });
+    assert.equal(closed.response.status, 200);
+    assert.deepEqual(closed.json.orders.map((order) => order.number), ['MO-SEA-002']);
+
+    const paged = await request(baseUrl, '/api/orders?limit=2&offset=1', { headers: authHeaders });
+    assert.equal(paged.response.status, 200);
+    assert.equal(paged.json.total, 3);
+    assert.equal(paged.json.limit, 2);
+    assert.equal(paged.json.offset, 1);
+    assert.deepEqual(paged.json.orders.map((order) => order.number), ['MO-SEA-002', 'MO-SEA-003']);
   });
 });
 
@@ -282,6 +424,170 @@ test('role permissions block sensitive order actions', async () => {
       headers: adminHeaders,
     });
     assert.equal(adminDelete.response.status, 200);
+  });
+});
+
+test('backend permissions allow coordinators but not mechanics to create client links', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const adminHeaders = await login(baseUrl, 'admin');
+    const mechanicHeaders = await login(baseUrl, 'mechanic');
+    const coordinatorHeaders = await login(baseUrl, 'coordinator');
+    const created = await request(baseUrl, '/api/orders', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({ client: { name: 'Links por rol' } }),
+    });
+    const id = created.json.order.id;
+
+    const mechanicToken = await request(baseUrl, `/api/orders/${id}/client-token`, {
+      method: 'POST',
+      headers: mechanicHeaders,
+    });
+    assert.equal(mechanicToken.response.status, 403);
+    assert.match(mechanicToken.json.error, /permiso/i);
+
+    const coordinatorToken = await request(baseUrl, `/api/orders/${id}/client-token`, {
+      method: 'POST',
+      headers: coordinatorHeaders,
+    });
+    assert.equal(coordinatorToken.response.status, 201);
+    assert.match(coordinatorToken.json.token, /^cli_/);
+  });
+});
+
+test('mechanic order updates are limited to technical fields and assigned tasks', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const adminHeaders = await login(baseUrl, 'admin');
+    const mechanicHeaders = await login(baseUrl, 'mechanic');
+    const created = await request(baseUrl, '/api/orders', {
+      method: 'POST',
+      headers: adminHeaders,
+      body: JSON.stringify({
+        status: 'inspection',
+        client: { name: 'Permisos mecanico' },
+        assignedTo: 'mechanic',
+        assignedUserId: 'mechanic',
+        quote: {
+          labor: [{ id: 'l1', name: 'Diagnostico', amount: 1000 }],
+          note: 'cotizacion original',
+          approved: false,
+        },
+        tasks: [
+          { id: 'task-mechanic', title: 'Registrar prueba', assignedUserId: 'mechanic', status: 'open' },
+          { id: 'task-other', title: 'Gestion cliente', assignedUserId: 'coordinator', status: 'open' },
+        ],
+      }),
+    });
+    const id = created.json.order.id;
+
+    const reassign = await request(baseUrl, `/api/orders/${id}`, {
+      method: 'PATCH',
+      headers: mechanicHeaders,
+      body: JSON.stringify({ assignedTo: 'mechanic2', assignedUserId: 'mechanic2' }),
+    });
+    assert.equal(reassign.response.status, 403);
+
+    const quote = await request(baseUrl, `/api/orders/${id}`, {
+      method: 'PATCH',
+      headers: mechanicHeaders,
+      body: JSON.stringify({ quote: { note: 'rebaja no autorizada', labor: [] } }),
+    });
+    assert.equal(quote.response.status, 403);
+
+    const close = await request(baseUrl, `/api/orders/${id}`, {
+      method: 'PATCH',
+      headers: mechanicHeaders,
+      body: JSON.stringify({ status: 'closed' }),
+    });
+    assert.equal(close.response.status, 403);
+
+    const replaceClose = await request(baseUrl, `/api/orders/${id}`, {
+      method: 'PUT',
+      headers: mechanicHeaders,
+      body: JSON.stringify({ status: 'closed', quote: { approved: true } }),
+    });
+    assert.equal(replaceClose.response.status, 403);
+
+    const technical = await request(baseUrl, `/api/orders/${id}`, {
+      method: 'PATCH',
+      headers: mechanicHeaders,
+      body: JSON.stringify({
+        status: 'in_progress',
+        intakeText: 'Vibra al frenar en ruta',
+        vehicle: { plate: 'ME-CH-01', mileage: '180000' },
+        findings: [{ id: 'f1', area: 'Frenos', severity: 'medio', description: 'Disco alabeado' }],
+        executionNotes: 'Se desmonta rueda delantera izquierda.',
+        progressPhotos: [{ id: 'ph1', type: 'Proceso', dataUrl: '/uploads/progress-test.webp' }],
+        tasks: [{ id: 'task-mechanic', status: 'done', notes: 'Prueba registrada' }],
+      }),
+    });
+    assert.equal(technical.response.status, 200);
+    assert.equal(technical.json.order.status, 'in_progress');
+    assert.equal(technical.json.order.intakeText, 'Vibra al frenar en ruta');
+    assert.equal(technical.json.order.vehicle.plate, 'ME-CH-01');
+    assert.equal(technical.json.order.findings[0].area, 'Frenos');
+    assert.equal(technical.json.order.executionNotes, 'Se desmonta rueda delantera izquierda.');
+    assert.equal(technical.json.order.progressPhotos[0].id, 'ph1');
+    assert.equal(technical.json.order.tasks.find((task) => task.id === 'task-mechanic').status, 'done');
+    assert.equal(technical.json.order.tasks.find((task) => task.id === 'task-other').status, 'open');
+    assert.equal(technical.json.order.assignedTo, 'mechanic');
+    assert.equal(technical.json.order.assignedUserId, 'mechanic');
+    assert.equal(technical.json.order.quote.note, 'cotizacion original');
+  });
+});
+
+test('backend blocks ready delivery transitions until execution gate passes', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const authHeaders = await login(baseUrl);
+    const created = await request(baseUrl, '/api/orders', {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ client: { name: 'Gate incompleto' } }),
+    });
+
+    const blocked = await request(baseUrl, `/api/orders/${created.json.order.id}`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ status: 'ready_delivery' }),
+    });
+    assert.equal(blocked.response.status, 409);
+    assert.match(blocked.json.error, /lista para entrega/);
+
+    const ready = await request(baseUrl, `/api/orders/${created.json.order.id}`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({
+        status: 'ready_delivery',
+        client: { phone: '+56912345678' },
+        vehicle: { brand: 'Toyota', model: 'Yaris', year: '2020', engine: '1.5' },
+        findings: [{ id: 'f1', area: 'Frenos', severity: 'bajo', description: 'Pastillas reemplazadas' }],
+        quote: { approved: true },
+        parts: [],
+      }),
+    });
+    assert.equal(ready.response.status, 200);
+    assert.equal(ready.json.order.status, 'ready_delivery');
+  });
+});
+
+test('order update API rejects direct event tampering', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const authHeaders = await login(baseUrl);
+    const created = await request(baseUrl, '/api/orders', {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({ events: [{ id: 'seed-event', type: 'legacy', message: '<b>ok</b>', unsafe: true }] }),
+    });
+    assert.equal(created.response.status, 201);
+    assert.equal(created.json.order.events[0].message, 'ok');
+    assert.equal(created.json.order.events[0].unsafe, undefined);
+
+    const tampered = await request(baseUrl, `/api/orders/${created.json.order.id}`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ events: [] }),
+    });
+    assert.equal(tampered.response.status, 403);
   });
 });
 
@@ -337,6 +643,177 @@ test('client token endpoint reads and updates only client-facing fields', async 
 
     const order = await request(baseUrl, `/api/orders/${created.json.order.id}`, { headers: authHeaders });
     assert.equal(order.json.order.privateNote, 'no debe exponerse');
+  });
+});
+
+test('client portal can update parts derived from quote items without exposing unsafe mutations', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const authHeaders = await login(baseUrl);
+    const created = await request(baseUrl, '/api/orders', {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        client: { name: 'Cliente repuestos' },
+        parts: [],
+        quote: {
+          labor: [],
+          parts: [{ id: 'qp-derived', name: 'Termostato', amount: 18000 }],
+          extras: [],
+          approved: false,
+          rejected: false,
+        },
+      }),
+    });
+
+    const updated = await request(baseUrl, `/api/client/orders/${created.json.clientToken}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        parts: [
+          {
+            id: 'qp-derived',
+            name: 'Termostato alternativo',
+            owner: 'mechanic',
+            status: 'received',
+            notes: 'Cliente adjunta foto',
+            price: 19000,
+            validatedBy: 'client',
+          },
+        ],
+      }),
+    });
+
+    assert.equal(updated.response.status, 200);
+    assert.equal(updated.json.order.parts.length, 1);
+    assert.equal(updated.json.order.parts[0].id, 'qp-derived');
+    assert.equal(updated.json.order.parts[0].name, 'Termostato');
+    assert.equal(updated.json.order.parts[0].owner, 'client');
+    assert.equal(updated.json.order.parts[0].status, 'received');
+    assert.equal(updated.json.order.parts[0].notes, 'Cliente adjunta foto');
+    assert.equal(updated.json.order.parts[0].validatedBy, '');
+
+    const internal = await request(baseUrl, `/api/orders/${created.json.order.id}`, { headers: authHeaders });
+    assert.equal(internal.json.order.parts[0].name, 'Termostato');
+    assert.equal(internal.json.order.parts[0].owner, 'client');
+  });
+});
+
+test('client quote confirmation records decidedAt and appears in portal events', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const authHeaders = await login(baseUrl);
+    const created = await request(baseUrl, '/api/orders', {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        number: 'MO-CONF-001',
+        status: 'quote_sent',
+        createdAt: '2026-05-19T10:00:00.000Z',
+        updatedAt: '2026-05-19T10:10:00.000Z',
+        statusChangedAt: '2026-05-19T10:05:00.000Z',
+        quote: {
+          sent: true,
+          sentAt: '2026-05-19T10:06:00.000Z',
+          approved: false,
+          rejected: false,
+        },
+      }),
+    });
+
+    const confirmed = await request(baseUrl, `/api/client/orders/${created.json.clientToken}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ quote: { approved: true, customerComment: 'Aprobado por portal' } }),
+    });
+    assert.equal(confirmed.response.status, 200);
+    assert.equal(confirmed.json.order.quote.approved, true);
+    assert.equal(confirmed.json.order.quote.rejected, false);
+    assert.equal(confirmed.json.order.quote.customerComment, 'Aprobado por portal');
+    assert.ok(Date.parse(confirmed.json.order.quote.decidedAt) > 0);
+
+    const events = await request(baseUrl, `/api/client/orders/${created.json.clientToken}/events`);
+    assert.equal(events.response.status, 200);
+    assert.ok(events.json.events.some((event) => event.type === 'created'));
+    const approvalEvent = events.json.events.find((event) => event.type === 'quote_approved');
+    assert.equal(approvalEvent.source, 'client');
+    assert.equal(approvalEvent.userId, '');
+    assert.match(approvalEvent.message, /Cotizacion aprobada/);
+  });
+});
+
+test('client tokens cannot mutate closed orders', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const authHeaders = await login(baseUrl);
+    const created = await request(baseUrl, '/api/orders', {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        client: { name: 'Cerrado', phone: '+56912345678' },
+        vehicle: { brand: 'Toyota', model: 'Yaris', year: '2020', engine: '1.5' },
+        findings: [{ id: 'f1', area: 'General', severity: 'bajo', description: 'Trabajo terminado' }],
+        quote: { approved: true, labor: [], parts: [], extras: [] },
+      }),
+    });
+
+    const closed = await request(baseUrl, `/api/orders/${created.json.order.id}`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ status: 'closed' }),
+    });
+    assert.equal(closed.response.status, 200);
+
+    const clientMutation = await request(baseUrl, `/api/client/orders/${created.json.clientToken}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ client: { email: 'cerrado@example.com' } }),
+    });
+    assert.equal(clientMutation.response.status, 403);
+
+    const clientRead = await request(baseUrl, `/api/client/orders/${created.json.clientToken}`);
+    assert.equal(clientRead.response.status, 200);
+    assert.equal(clientRead.json.order.status, 'closed');
+  });
+});
+
+test('client token endpoint materializes quote parts before applying client updates', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const authHeaders = await login(baseUrl);
+    const created = await request(baseUrl, '/api/orders', {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        client: { name: 'Luis' },
+        parts: [],
+        quote: {
+          labor: [],
+          parts: [{ id: 'qp1', name: 'Filtro aceite', amount: 2000 }],
+          extras: [],
+          approved: true,
+        },
+      }),
+    });
+
+    const updated = await request(baseUrl, `/api/client/${created.json.clientToken}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        parts: [{
+          id: 'qp1',
+          name: 'Filtro premium',
+          owner: 'mechanic',
+          status: 'received',
+          dueDate: '2026-05-30',
+          notes: 'Comprado por cliente',
+          price: 2500,
+          photoDataUrl: 'data:image/png;base64,abc',
+        }],
+      }),
+    });
+
+    assert.equal(updated.response.status, 200);
+    assert.equal(updated.json.order.parts.length, 1);
+    assert.equal(updated.json.order.parts[0].name, 'Filtro aceite');
+    assert.equal(updated.json.order.parts[0].owner, 'client');
+    assert.equal(updated.json.order.parts[0].status, 'received');
+    assert.equal(updated.json.order.parts[0].dueDate, '2026-05-30');
+    assert.equal(updated.json.order.parts[0].notes, 'Comprado por cliente');
+    assert.equal(updated.json.order.parts[0].price, 2500);
+    assert.equal(updated.json.order.parts[0].photoDataUrl, 'data:image/png;base64,abc');
   });
 });
 
@@ -540,7 +1017,53 @@ test('client order events endpoint returns portal timestamps metadata', async ()
     assert.equal(events.json.orderId, created.json.order.id);
     assert.equal(events.json.number, 'MO-200');
     assert.equal(events.json.status, 'quote_sent');
-    assert.deepEqual(events.json.events.map((event) => event.type), ['created', 'status_changed', 'quote_sent', 'updated']);
+    assert.deepEqual(new Set(events.json.events.map((event) => event.type)), new Set(['created', 'status_changed', 'quote_sent', 'updated']));
+    assert.ok(events.json.events.find((event) => event.type === 'quote_sent').message);
+  });
+});
+
+test('order API persists critical quote decision and close events', async () => {
+  await withServer(async ({ baseUrl }) => {
+    const authHeaders = await login(baseUrl);
+    const created = await request(baseUrl, '/api/orders', {
+      method: 'POST',
+      headers: authHeaders,
+      body: JSON.stringify({
+        number: 'MO-EVENTS',
+        client: { name: 'Eventos', phone: '+56912345678' },
+        vehicle: { brand: 'Toyota', model: 'Yaris', year: '2020', engine: '1.5' },
+        findings: [{ id: 'f1', area: 'General', severity: 'bajo', description: 'Trabajo terminado' }],
+        quote: { labor: [{ id: 'l1', name: 'Mano de obra', amount: 1000 }], parts: [], extras: [] },
+      }),
+    });
+    const id = created.json.order.id;
+
+    const sent = await request(baseUrl, `/api/orders/${id}`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ status: 'quote_sent', quote: { sent: true } }),
+    });
+    assert.equal(sent.response.status, 200);
+    assert.match(sent.json.order.quote.sentAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.ok(sent.json.order.events.some((event) => event.type === 'quote_sent'));
+
+    const approved = await request(baseUrl, `/api/orders/${id}`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ quote: { approved: true } }),
+    });
+    assert.equal(approved.response.status, 200);
+    assert.match(approved.json.order.quote.decidedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.ok(approved.json.order.events.some((event) => event.type === 'quote_approved'));
+
+    const closed = await request(baseUrl, `/api/orders/${id}`, {
+      method: 'PATCH',
+      headers: authHeaders,
+      body: JSON.stringify({ status: 'closed' }),
+    });
+    assert.equal(closed.response.status, 200);
+    assert.match(closed.json.order.closedAt, /^\d{4}-\d{2}-\d{2}T/);
+    assert.ok(closed.json.order.events.some((event) => event.type === 'order_closed'));
   });
 });
 

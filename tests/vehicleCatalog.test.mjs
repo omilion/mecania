@@ -1,6 +1,33 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { loadVehicleCatalog } from '../src/vehicleCatalog.js';
+import { createVehicleCatalogLoader, loadVehicleCatalog } from '../src/vehicleCatalog.js';
+
+test('EPA catalog loader imports data lazily and caches the catalog', async () => {
+  let importCount = 0;
+  const loadCatalog = createVehicleCatalogLoader(async () => {
+    importCount += 1;
+    return {
+      EPA_VEHICLE_INDEX: {
+        2026: {
+          Toyota: {
+            '4Runner 2WD': ['4Runner', [['4.0', '6', 'Regular Gasoline', 'Automatic 5-spd', '2-Wheel Drive', 'SUV']]],
+          },
+        },
+      },
+    };
+  });
+
+  assert.equal(importCount, 0);
+
+  const catalog = await loadCatalog();
+  const cachedCatalog = await loadCatalog();
+
+  assert.equal(importCount, 1);
+  assert.equal(cachedCatalog, catalog);
+  assert.deepEqual(catalog.years(), [2026]);
+  assert.deepEqual(catalog.makes(2026), ['Toyota']);
+  assert.deepEqual(catalog.models(2026, 'Toyota'), ['4Runner 2WD']);
+});
 
 test('EPA catalog exposes modern years, makes, models and engines', async () => {
   const catalog = await loadVehicleCatalog();

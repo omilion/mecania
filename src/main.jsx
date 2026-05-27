@@ -2,6 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   AlertTriangle,
+  Archive,
   Bot,
   Camera,
   Car,
@@ -35,7 +36,9 @@ import {
   generateAiRemote,
   getAuthToken,
   loadAuthenticatedUser,
+  loadClientsState,
   loadClientOrder,
+  loadClientOrderEvents,
   loadOrdersState,
   loadWorkshopUsers,
   loginInternal,
@@ -43,6 +46,7 @@ import {
   normalizeSyncError,
   refreshClientToken,
   saveOrder,
+  updateClientRecord,
   updateClientOrder,
   uploadPhoto,
 } from './apiClient.js';
@@ -53,6 +57,7 @@ import {
 } from './vehicleCatalog.js';
 import {
   clientDataMessage,
+  appendTraceEvent,
   canManageWorkshop,
   createInternalTask,
   createPhotoRecord,
@@ -66,6 +71,7 @@ import {
   materializeQuoteParts,
   money,
   newOrder,
+  normalizeQuoteAmount,
   normalizeWorkshopOrder,
   orderTasksSummary,
   partStatuses,
@@ -74,6 +80,7 @@ import {
   quoteStageStatuses,
   quoteStages,
   quoteTotal,
+  reconcileOrderEvents,
   readinessBadge,
   requiredReceptionPhotoTypes,
   safetyImpacts,
@@ -136,10 +143,17 @@ function App() {
   const [jobStep, setJobStep] = useState('vehicle');
   const [jobMode, setJobMode] = useState('list');
   const [jobFilter, setJobFilter] = useState('active');
+  const [jobSearch, setJobSearch] = useState('');
+  const [historySearch, setHistorySearch] = useState('');
   const [currentUserId, setCurrentUserId] = useState(workshopUsers[0].id);
   const [pendingSaveId, setPendingSaveId] = useState('');
   const [storageError, setStorageError] = useState('');
   const [loaded, setLoaded] = useState(false);
+  const [jobListState, setJobListState] = useState(null);
+  const [historyListState, setHistoryListState] = useState(null);
+  const [clientSearch, setClientSearch] = useState('');
+  const [clientListState, setClientListState] = useState(null);
+  const [clientSyncError, setClientSyncError] = useState('');
   const params = new URLSearchParams(window.location.search);
   const clientMode = params.get('mode') === 'client';
   const clientToken = params.get('token');
@@ -234,19 +248,110 @@ function App() {
     setActiveId(nextActiveId);
   };
 
+  const mergeOrders = (incomingOrders = []) => {
+    if (!incomingOrders.length) return;
+    setOrders((currentOrders) => {
+      const byId = new Map(currentOrders.map((order) => [order.id, order]));
+      incomingOrders.map(normalizeWorkshopOrder).forEach((order) => byId.set(order.id, order));
+      return Array.from(byId.values());
+    });
+  };
+
+  useEffect(() => {
+    if (clientMode || authLoading || !authSession || section !== 'jobs' || jobMode !== 'list') return undefined;
+    const search = jobSearch.trim();
+    const status = serverStatusFilter(jobFilter);
+    const shouldUseRemoteList = search.length >= 2 || Boolean(status);
+    if (!shouldUseRemoteList) {
+      setJobListState(null);
+      return undefined;
+    }
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      loadOrdersState({ query: { search, status, limit: 80, offset: 0 } })
+        .then((state) => {
+          if (!cancelled) {
+            setJobListState(normalizeRemoteListState(state, { search, status, limit: 80, offset: 0 }));
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setJobListState(null);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [clientMode, authLoading, authSession, section, jobMode, jobFilter, jobSearch]);
+
+  useEffect(() => {
+    if (clientMode || authLoading || !authSession || section !== 'history') return undefined;
+    const search = historySearch.trim();
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      Promise.all([
+        loadOrdersState({ query: { search, status: 'all', limit: 80, offset: 0 } }),
+        loadOrdersState({ query: { search, status: 'archived', limit: 80, offset: 0 } }),
+      ])
+        .then(([state, archivedState]) => {
+          if (!cancelled) {
+            const base = normalizeRemoteListState(state, { search, status: 'all', limit: 80, offset: 0 });
+            const archived = normalizeRemoteListState(archivedState, { search, status: 'archived', limit: 80, offset: 0 });
+            setHistoryListState({
+              ...base,
+              orders: [...base.orders, ...archived.orders],
+              total: base.total + archived.total,
+              archivedTotal: archived.total,
+            });
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setHistoryListState(null);
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [clientMode, authLoading, authSession, section, historySearch]);
+
+  useEffect(() => {
+    if (clientMode || authLoading || !authSession || section !== 'clients') return undefined;
+    const search = clientSearch.trim();
+    let cancelled = false;
+    const timeout = window.setTimeout(() => {
+      loadClientsState({ query: { search, limit: 80, offset: 0 } })
+        .then((state) => {
+          if (cancelled) return;
+          setClientListState(state);
+          setClientSyncError('');
+        })
+        .catch((error) => {
+          if (cancelled) return;
+          setClientListState(null);
+          setClientSyncError(normalizeSyncError(error, 'No se pudo cargar maestro de clientes.'));
+        });
+    }, 250);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timeout);
+    };
+  }, [clientMode, authLoading, authSession, section, clientSearch, orders.length]);
+
   const updateOrder = (patcher) => {
     setPendingSaveId(activeId);
     setOrders((currentOrders) => currentOrders.map((order) => {
       if (order.id !== activeId) return order;
       const next = typeof patcher === 'function' ? patcher(order) : { ...order, ...patcher };
       const now = new Date().toISOString();
-      return {
+      const stamped = {
         ...next,
         updatedAt: now,
         updatedByUserId: currentUser.id,
         statusChangedAt: next.status !== order.status ? now : order.statusChangedAt,
         statusChangedByUserId: next.status !== order.status ? currentUser.id : order.statusChangedByUserId,
       };
+      return reconcileOrderEvents(stamped, order, currentUser.id, now);
     }));
   };
 
@@ -271,6 +376,8 @@ function App() {
   };
 
   const deleteActive = async () => {
+    if (!activeOrder?.id) return;
+    if (!window.confirm(`Archivar la orden ${activeOrder.number}? Dejara de aparecer en los listados activos.`)) return;
     if (orders.length === 1) {
       if (activeOrder?.id) await deleteRemoteOrder(activeOrder.id);
       const order = await createRemoteOrder(newOrder());
@@ -280,6 +387,14 @@ function App() {
     await deleteRemoteOrder(activeOrder.id);
     const next = orders.filter((order) => order.id !== activeOrder.id);
     commit(next, next[0].id);
+  };
+
+  const archiveActive = () => {
+    if (!window.confirm(`Archivar la orden ${activeOrder.number}? Podras verla en el historial filtrando archivadas.`)) return;
+    updateOrder((current) => orderWithEvent({
+      ...current,
+      status: 'archived',
+    }, 'order_archived', currentUser.id, 'Orden archivada desde la interfaz.', {}));
   };
 
   const login = async (credentials) => {
@@ -342,6 +457,17 @@ function App() {
     setSection('jobs');
     setJobMode('list');
   };
+  const handleUpdateClientRecord = async (clientId, clientPatch) => {
+    const response = await updateClientRecord(clientId, clientPatch);
+    setClientSyncError('');
+    const reload = await loadClientsState({ query: { search: clientSearch.trim(), limit: 80, offset: 0 } });
+    setClientListState(reload);
+    if (response?.updatedOrders) {
+      const state = await loadOrdersState();
+      setOrders((state.orders?.length ? state.orders : orders).map(normalizeWorkshopOrder));
+    }
+    return response;
+  };
   const focusMode = section === 'jobs' && jobMode !== 'list';
 
   return (
@@ -374,8 +500,8 @@ function App() {
               </select>
             )}
             {section === 'jobs' && userCan(currentUser, 'deleteOrders') && (
-              <button className="icon-button danger" onClick={deleteActive} title="Eliminar orden" aria-label="Eliminar orden activa">
-                <Trash2 size={18} />
+              <button className="icon-button" onClick={archiveActive} title="Archivar orden" aria-label="Archivar orden activa">
+                <Archive size={18} />
               </button>
             )}
           </div>
@@ -397,13 +523,26 @@ function App() {
             setJobMode={setJobMode}
             statusFilter={jobFilter}
             setStatusFilter={setJobFilter}
+            search={jobSearch}
+            setSearch={setJobSearch}
+            remoteListState={jobListState}
             updateOrder={updateOrder}
             addOrder={addOrder}
             storageError={storageError}
           />
         )}
-        {section === 'clients' && <Clients orders={orders} openJob={openJob} />}
-        {section === 'history' && <History orders={orders} openJob={openJob} />}
+        {section === 'clients' && (
+          <Clients
+            orders={orders}
+            openJob={openJob}
+            search={clientSearch}
+            setSearch={setClientSearch}
+            remoteState={clientListState}
+            syncError={clientSyncError}
+            onUpdateClient={handleUpdateClientRecord}
+          />
+        )}
+        {section === 'history' && <History orders={orders} openJob={openJob} search={historySearch} setSearch={setHistorySearch} remoteListState={historyListState} />}
         {section === 'pending' && <Pending orders={orders} currentUser={currentUser} openJob={openJob} />}
       </main>
     </div>
@@ -552,9 +691,9 @@ function normalizeAuthUser(user = {}) {
 
 function Dashboard({ orders, currentUser, openJob, setSection, openJobsFilter, addOrder }) {
   const waiting = orders.filter((order) => order.status === 'waiting_parts').length;
-  const ready = orders.filter((order) => order.status !== 'closed' && executionGate(order).ok).length;
+  const ready = orders.filter((order) => isOpenOrder(order) && executionGate(order).ok).length;
   const quotes = orders.filter((order) => order.status === 'quote_draft' || order.status === 'quote_sent').length;
-  const open = orders.filter((order) => order.status !== 'closed').length;
+  const open = orders.filter(isOpenOrder).length;
   const myOrders = orders.filter((order) => isOrderRelevantForUser(order, currentUser));
   const myPending = pendingItemsForUser(orders, currentUser);
   const unassigned = orders.filter(hasAssignmentGap).length;
@@ -644,28 +783,40 @@ function Dashboard({ orders, currentUser, openJob, setSection, openJobsFilter, a
   );
 }
 
-function Jobs({ orders, activeOrder, currentUser, users, openJob, jobStep, setJobStep, jobMode, setJobMode, statusFilter, setStatusFilter, updateOrder, addOrder, storageError }) {
+function Jobs({ orders, activeOrder, currentUser, users, openJob, jobStep, setJobStep, jobMode, setJobMode, statusFilter, setStatusFilter, search, setSearch, remoteListState, updateOrder, addOrder, storageError }) {
+  const searchText = normalizeSearchText(search).trim();
+  const compactSearchText = searchText.replace(/[^a-z0-9]/g, '');
+  const serverBackedFilter = Boolean(serverStatusFilter(statusFilter));
+  const useRemoteList = Boolean(remoteListState?.orders && (searchText.length >= 2 || serverBackedFilter));
+  const sourceOrders = useRemoteList ? remoteListState.orders : orders;
   const filterCounts = {
-    active: orders.filter((order) => order.status !== 'closed').length,
+    active: orders.filter(isOpenOrder).length,
     mine: orders.filter((order) => isOrderRelevantForUser(order, currentUser)).length,
     unassigned: orders.filter(hasAssignmentGap).length,
     waiting_parts: orders.filter((order) => order.status === 'waiting_parts').length,
     quote: orders.filter((order) => order.status === 'quote_draft' || order.status === 'quote_sent').length,
-    ready: orders.filter((order) => order.status !== 'closed' && executionGate(order).ok).length,
+    ready: orders.filter((order) => isOpenOrder(order) && executionGate(order).ok).length,
     blocked: orders.filter((order) => prepScore(order).state === 'red').length,
     closed: orders.filter((order) => order.status === 'closed').length,
+    archived: orders.filter((order) => order.status === 'archived').length,
     all: orders.length,
   };
-  const filteredOrders = orders.filter((order) => {
+  const filteredOrders = sourceOrders.filter((order) => {
+    if (searchText) {
+      const haystack = orderSearchText(order);
+      const compactHaystack = haystack.replace(/[^a-z0-9]/g, '');
+      if (!haystack.includes(searchText) && (!compactSearchText || !compactHaystack.includes(compactSearchText))) return false;
+    }
     if (statusFilter === 'all') return true;
     if (statusFilter === 'mine') return isOrderRelevantForUser(order, currentUser);
     if (statusFilter === 'unassigned') return hasAssignmentGap(order);
     if (statusFilter === 'closed') return order.status === 'closed';
+    if (statusFilter === 'archived') return order.status === 'archived';
     if (statusFilter === 'waiting_parts') return order.status === 'waiting_parts';
     if (statusFilter === 'quote') return order.status === 'quote_draft' || order.status === 'quote_sent';
-    if (statusFilter === 'ready') return order.status !== 'closed' && executionGate(order).ok;
+    if (statusFilter === 'ready') return isOpenOrder(order) && executionGate(order).ok;
     if (statusFilter === 'blocked') return prepScore(order).state === 'red';
-    return order.status !== 'closed';
+    return isOpenOrder(order);
   });
 
   if (jobMode === 'visit') {
@@ -738,6 +889,7 @@ function Jobs({ orders, activeOrder, currentUser, users, openJob, jobStep, setJo
               ['ready', 'Listos'],
               ['blocked', 'Bloqueados'],
               ['closed', 'Cerrados'],
+              ['archived', 'Archivados'],
               ['all', 'Todos'],
             ].map(([value, label]) => (
               <button key={value} className={statusFilter === value ? 'active' : ''} onClick={() => setStatusFilter(value)}>
@@ -745,6 +897,12 @@ function Jobs({ orders, activeOrder, currentUser, users, openJob, jobStep, setJo
               </button>
             ))}
           </div>
+          <Input label="Buscar" value={search} onChange={setSearch} placeholder="Orden, cliente, WhatsApp, patente, marca o modelo" />
+          {useRemoteList && (
+            <p className="status-note">
+              Mostrando {filteredOrders.length} de {remoteListState.total} resultados API (limite {remoteListState.limit}, desde {remoteListState.offset}).
+            </p>
+          )}
         </div>
         <div className="job-card-grid">
           {filteredOrders.map((order) => (
@@ -923,6 +1081,15 @@ function AssignmentPanel({ order, users, currentUser, updateOrder }) {
         ))}
       </div>
       <div className="form-grid compact">
+        <label>
+          Prioridad orden
+          <select value={order.priority || 'normal'} onChange={(event) => updateOrder({ priority: event.target.value })} disabled={!canAssign}>
+            {Object.entries(taskPriorities).map(([value, label]) => (
+              <option key={value} value={value}>{label}</option>
+            ))}
+          </select>
+        </label>
+        <Input label="Fecha promesa" value={order.promisedAt || ''} onChange={(value) => updateOrder({ promisedAt: value })} placeholder="2026-05-20 18:00" />
         <Textarea label="Nota interna de coordinación" value={order.internalNotes || ''} onChange={(value) => updateOrder({ internalNotes: value })} placeholder="Ej: cliente solo puede recibir martes, validar pago antes de comprar repuesto..." />
         <div className="task-composer">
           <Input label="Nueva tarea" value={taskTitle} onChange={setTaskTitle} placeholder="Ej: validar foto de repuesto, llamar cliente, revisar fuga" />
@@ -1057,26 +1224,41 @@ function WizardStep({ step, order, updateOrder, setJobStep, currentUser }) {
     detail_photos: <VisitPhotos order={order} updateOrder={updateOrder} mode="detail" />,
     client: <Client order={order} updateOrder={updateOrder} currentUser={currentUser} />,
     inspection: <Inspection order={order} updateOrder={updateOrder} />,
-    quote: <Quote order={order} updateOrder={updateOrder} />,
-    parts: <Parts order={order} updateOrder={updateOrder} />,
+    quote: <Quote order={order} updateOrder={updateOrder} currentUser={currentUser} />,
+    parts: <Parts order={order} updateOrder={updateOrder} currentUser={currentUser} />,
     execution: <Execution order={order} updateOrder={updateOrder} />,
-    handoff: <Handoff order={order} updateOrder={updateOrder} />,
+    handoff: <Handoff order={order} updateOrder={updateOrder} currentUser={currentUser} />,
   };
   return components[step] || components.intake;
 }
 
-function Clients({ orders, openJob }) {
+function Clients({ orders, openJob, search, setSearch, remoteState, syncError, onUpdateClient }) {
   const missingClientOrders = orders.filter((order) => !order.client.name && !order.client.phone && order.status !== 'closed');
-  const clients = orders.filter((order) => order.client.name || order.client.phone).reduce((acc, order) => {
+  const localClients = orders.filter((order) => order.client.name || order.client.phone).reduce((acc, order) => {
     const key = order.client.phone || order.client.name || order.id;
-    if (!acc[key]) acc[key] = { client: order.client, orders: [] };
+    if (!acc[key]) acc[key] = { client: { ...order.client, id: key }, orders: [] };
     acc[key].orders.push(order);
     return acc;
   }, {});
+  const orderById = new Map(orders.map((order) => [order.id, order]));
+  const remoteClients = Array.isArray(remoteState?.clients) ? remoteState.clients : [];
+  const clients = remoteClients.length
+    ? remoteClients.map((client) => ({
+      client,
+      orders: (client.orderIds || []).map((id) => orderById.get(id)).filter(Boolean),
+    }))
+    : Object.values(localClients);
 
   return (
     <section className="panel">
-      <PanelTitle icon={User} title="Clientes" subtitle="Ficha simple de clientes y sus trabajos asociados." />
+      <PanelTitle icon={User} title="Clientes" subtitle="Maestro operativo editable desde las ordenes asociadas." />
+      <Input label="Buscar cliente" value={search} onChange={setSearch} placeholder="Nombre, WhatsApp, email, direccion, patente u orden" />
+      {remoteState && (
+        <p className="status-note">
+          Mostrando {clients.length} de {remoteState.total} clientes API (limite {remoteState.limit}, desde {remoteState.offset}).
+        </p>
+      )}
+      {syncError && <p className="status-note warning">{syncError}</p>}
       <div className="order-list">
         {missingClientOrders.length > 0 && (
           <div className="client-row warning-row">
@@ -1094,10 +1276,11 @@ function Clients({ orders, openJob }) {
             </div>
           </div>
         )}
-        {Object.values(clients).map(({ client, orders: clientOrders }) => (
-          <div className="client-row" key={client.phone || client.name || clientOrders[0].id}>
+        {clients.map(({ client, orders: clientOrders }) => (
+          <div className="client-row" key={client.id || client.phone || client.name || clientOrders[0]?.id}>
             <div>
               <strong>{client.name || 'Cliente sin registrar'}</strong>
+              <ClientInlineEditor client={client} onUpdateClient={onUpdateClient} />
               <span>{client.phone || 'Sin WhatsApp'} · {client.address || 'Sin direccion'}</span>
             </div>
             <div className="button-row">
@@ -1110,7 +1293,7 @@ function Clients({ orders, openJob }) {
             </div>
           </div>
         ))}
-        {!Object.values(clients).length && !missingClientOrders.length && (
+        {!clients.length && !missingClientOrders.length && (
           <EmptyState title="Sin clientes" body="Cuando registres datos de contacto, apareceran aqui." />
         )}
       </div>
@@ -1118,12 +1301,75 @@ function Clients({ orders, openJob }) {
   );
 }
 
-function History({ orders, openJob }) {
-  const closed = orders.filter((order) => order.status === 'closed');
-  const readyDelivery = orders.filter((order) => order.status === 'ready_delivery');
+function ClientInlineEditor({ client, onUpdateClient }) {
+  const [draft, setDraft] = useState({
+    name: client.name || '',
+    phone: client.phone || '',
+    email: client.email || '',
+    address: client.address || '',
+  });
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    setDraft({
+      name: client.name || '',
+      phone: client.phone || '',
+      email: client.email || '',
+      address: client.address || '',
+    });
+    setError('');
+  }, [client.id, client.name, client.phone, client.email, client.address]);
+
+  const save = async () => {
+    if (!onUpdateClient || !client.id) return;
+    setSaving(true);
+    setError('');
+    try {
+      await onUpdateClient(client.id, draft);
+    } catch (saveError) {
+      setError(normalizeSyncError(saveError, 'No se pudo guardar cliente.'));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="grid two compact-inputs client-editor">
+      <Input label="Nombre" value={draft.name} onChange={(value) => setDraft((current) => ({ ...current, name: value }))} />
+      <Input label="WhatsApp" value={draft.phone} onChange={(value) => setDraft((current) => ({ ...current, phone: value }))} />
+      <Input label="Email" value={draft.email} onChange={(value) => setDraft((current) => ({ ...current, email: value }))} />
+      <Input label="Direccion" value={draft.address} onChange={(value) => setDraft((current) => ({ ...current, address: value }))} />
+      <button className="tiny-button" type="button" onClick={save} disabled={saving || !onUpdateClient || !client.id}>
+        {saving ? 'Guardando' : 'Guardar cliente'}
+      </button>
+      {error && <span className="small-muted">{error}</span>}
+    </div>
+  );
+}
+
+function History({ orders, openJob, search, setSearch, remoteListState }) {
+  const searchText = normalizeSearchText(search).trim();
+  const compactSearchText = searchText.replace(/[^a-z0-9]/g, '');
+  const sourceOrders = remoteListState?.orders || orders;
+  const matchesSearch = (order) => {
+    if (!searchText) return true;
+    const haystack = orderSearchText(order);
+    const compactHaystack = haystack.replace(/[^a-z0-9]/g, '');
+    return haystack.includes(searchText) || (compactSearchText && compactHaystack.includes(compactSearchText));
+  };
+  const closed = sourceOrders.filter((order) => order.status === 'closed' && matchesSearch(order));
+  const archived = sourceOrders.filter((order) => (order.status === 'archived' || order.archivedAt || order.deletedAt) && matchesSearch(order));
+  const readyDelivery = sourceOrders.filter((order) => order.status === 'ready_delivery' && matchesSearch(order));
   return (
     <section className="panel">
       <PanelTitle icon={Clock} title="Historial" subtitle="Trabajos cerrados con acceso al detalle completo." />
+      <Input label="Buscar historial" value={search} onChange={setSearch} placeholder="Orden, cliente, WhatsApp, patente, marca o modelo" />
+      {remoteListState && (
+        <p className="status-note">
+          Mostrando {sourceOrders.length} de {remoteListState.total} resultados API (limite {remoteListState.limit}, desde {remoteListState.offset}).
+        </p>
+      )}
       <div className="order-list">
         {closed.map((order) => (
           <button className="order-row" key={order.id} onClick={() => openJob(order.id, 'handoff')}>
@@ -1141,6 +1387,25 @@ function History({ orders, openJob }) {
         ))}
         {!closed.length && (
           <EmptyState title="Sin trabajos cerrados" body="El historial se llenara cuando cierres la entrega de una orden." />
+        )}
+        {archived.length > 0 && (
+          <div className="subsection">
+            <h3>Archivadas</h3>
+            {archived.map((order) => (
+              <button className="order-row" key={order.id} onClick={() => openJob(order.id, 'handoff')}>
+                <div>
+                  <strong>{order.number}</strong>
+                  <span>{order.client.name || 'Cliente sin registrar'}</span>
+                </div>
+                <div>
+                  <span>{vehicleName(order)}</span>
+                  <small>{statusLabels[order.status]}</small>
+                </div>
+                <Badge tone="amber">Archivada</Badge>
+                <ChevronRight size={18} />
+              </button>
+            ))}
+          </div>
         )}
         {readyDelivery.length > 0 && (
           <div className="subsection">
@@ -1207,9 +1472,54 @@ function getOrderAssignments(order) {
 }
 
 function hasAssignmentGap(order) {
-  if (order.status === 'closed') return false;
+  if (!isOpenOrder(order)) return false;
   const assignments = getOrderAssignments(order);
   return !assignments.responsible || !assignments.coordinator || !assignments.mechanic;
+}
+
+function isOpenOrder(order = {}) {
+  return !order.archivedAt && !order.deletedAt && !['closed', 'archived'].includes(order.status);
+}
+
+function orderSearchText(order = {}) {
+  return normalizeSearchText([
+    order.id,
+    order.number,
+    order.client?.name,
+    order.client?.phone,
+    order.client?.email,
+    order.vehicle?.plate,
+    order.vehicle?.make,
+    order.vehicle?.brand,
+    order.vehicle?.model,
+    order.vehicle?.year,
+    order.vehicle?.engine,
+  ].filter(Boolean).join(' '));
+}
+
+function normalizeSearchText(value) {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
+function serverStatusFilter(statusFilter) {
+  if (['active', 'closed', 'archived', 'waiting_parts', 'quote', 'ready_delivery', 'all'].includes(statusFilter)) return statusFilter;
+  return '';
+}
+
+function normalizeRemoteListState(state = {}, query = {}) {
+  const orders = Array.isArray(state.orders) ? state.orders.map(normalizeWorkshopOrder) : [];
+  return {
+    orders,
+    total: Number.isFinite(Number(state.total)) ? Number(state.total) : orders.length,
+    limit: Number.isFinite(Number(state.limit)) ? Number(state.limit) : Number(query.limit || orders.length),
+    offset: Number.isFinite(Number(state.offset)) ? Number(state.offset) : Number(query.offset || 0),
+    search: state.search ?? query.search ?? '',
+    status: state.status ?? query.status ?? '',
+    source: state.source || 'api',
+  };
 }
 
 function userName(userId) {
@@ -1217,7 +1527,7 @@ function userName(userId) {
 }
 
 function isOrderRelevantForUser(order, user) {
-  if (order.status === 'closed') return false;
+  if (!isOpenOrder(order)) return false;
   if (user.role === 'admin') return true;
   const assignments = getOrderAssignments(order);
   if (assignments.responsible === user.id || assignments.coordinator === user.id || assignments.mechanic === user.id) return true;
@@ -1347,6 +1657,21 @@ function mergeQuoteItems(existingItems = [], incomingNames = []) {
   });
 }
 
+function orderWithEvent(order, type, userId, message, meta = {}) {
+  return appendTraceEvent(order, {
+    id: crypto.randomUUID(),
+    type,
+    userId,
+    message,
+    meta,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+function validQuoteAmount(value) {
+  return normalizeQuoteAmount(value);
+}
+
 async function generateWorkflowAi(task, order, context = {}) {
   const result = await generateAiRemote(task, order, { context });
   return result?.text || String(result || '');
@@ -1392,9 +1717,8 @@ function readPhotoFile(file, onSuccess, onError, uploadMeta = {}) {
       });
       onError('');
       onSuccess(uploaded.dataUrl || uploaded.url || reader.result, uploaded);
-    } catch {
-      onError('');
-      onSuccess(reader.result);
+    } catch (uploadError) {
+      onError(normalizeSyncError(uploadError, 'No se pudo subir la foto.'));
     }
   };
   reader.onerror = () => onError('No se pudo leer la imagen. Intenta con otra foto.');
@@ -1764,6 +2088,9 @@ function Vehicle({ order, updateOrder }) {
           {showManualEngine && (
             <Input label="Motor / cilindrada manual" value={order.vehicle.engine} onChange={(value) => updateVehicle('engine', value)} placeholder="Ej: 1.4, 1.6, 2.0" />
           )}
+          <Input label="VIN / chasis" value={order.vehicle.vin || ''} onChange={(value) => updateVehicle('vin', value.toUpperCase())} />
+          <Input label="Codigo motor" value={order.vehicle.engineCode || ''} onChange={(value) => updateVehicle('engineCode', value.toUpperCase())} />
+          <Input label="Codigos OEM / catalogo" value={order.vehicle.oemCodes || ''} onChange={(value) => updateVehicle('oemCodes', value.toUpperCase())} />
           <Input label="Kilometraje" value={order.vehicle.mileage} onChange={(value) => updateVehicle('mileage', value)} />
           <Input label="Color" value={order.vehicle.color} onChange={(value) => updateVehicle('color', value)} />
         </div>
@@ -1775,6 +2102,7 @@ function Vehicle({ order, updateOrder }) {
           ['Modelo informado', Boolean(order.vehicle.model)],
           ['Año informado', Boolean(order.vehicle.year)],
           ['Motor/cilindrada informado', Boolean(order.vehicle.engine)],
+          ['VIN o codigo OEM', Boolean(order.vehicle.vin || order.vehicle.oemCodes)],
           ['Cilindros / combustible / transmisión', Boolean(order.vehicle.cylinders || order.vehicle.fuel || order.vehicle.transmission)],
           ['Patente informada', Boolean(order.vehicle.plate)],
         ]} />
@@ -1901,7 +2229,7 @@ function Client({ order, updateOrder, currentUser }) {
           Generar link con token
         </button>
         {!canCreateClientLink && <p className="permission-note">Solo administracion o coordinacion genera links para cliente.</p>}
-        <WhatsAppButton phone={order.client.phone} text={clientDataMessage(order)} label="Enviar solicitud por WhatsApp" enabled={order.client.contactConsent} />
+        <WhatsAppButton phone={order.client.phone} text={clientDataMessage(order)} label="Enviar solicitud por WhatsApp" enabled={order.client.contactConsent} onOpen={(type) => updateOrder((current) => orderWithEvent(current, type, currentUser?.id || 'coordinator', 'WhatsApp de solicitud de datos abierto.', { channel: 'whatsapp', target: 'client_data' }))} />
       </section>
     </div>
   );
@@ -1909,6 +2237,7 @@ function Client({ order, updateOrder, currentUser }) {
 
 function ClientPortalRoute({ token }) {
   const [order, setOrder] = useState(null);
+  const [events, setEvents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [syncStatus, setSyncStatus] = useState('');
@@ -1921,9 +2250,13 @@ function ClientPortalRoute({ token }) {
       return () => {};
     }
     setSyncStatus('Actualizando...');
-    loadClientOrder(token).then((loadedOrder) => {
+    Promise.all([
+      loadClientOrder(token),
+      loadClientOrderEvents(token).catch(() => null),
+    ]).then(([loadedOrder, eventState]) => {
       if (cancelled) return;
       setOrder(loadedOrder);
+      setEvents(Array.isArray(eventState?.events) ? eventState.events : []);
       setError(loadedOrder ? '' : 'Orden no encontrada.');
       setSyncStatus(loadedOrder ? 'Actualizado' : '');
       setLoading(false);
@@ -1942,13 +2275,16 @@ function ClientPortalRoute({ token }) {
     return refreshOrder();
   }, [token]);
 
-  const updateOrder = (patcher) => {
+  const updateOrder = (patch, optimisticPatcher = null) => {
     setOrder((current) => {
       if (!current) return current;
-      const next = typeof patcher === 'function' ? patcher(current) : { ...current, ...patcher };
+      const next = typeof optimisticPatcher === 'function' ? optimisticPatcher(current) : { ...current, ...patch };
       setSyncStatus('Guardando...');
-      updateClientOrder(token, next).then((saved) => {
+      updateClientOrder(token, patch).then((saved) => {
         if (saved) setOrder(saved);
+        loadClientOrderEvents(token).then((eventState) => {
+          setEvents(Array.isArray(eventState?.events) ? eventState.events : []);
+        }).catch(() => {});
         setSyncStatus('Guardado');
         setError('');
       }).catch((updateError) => {
@@ -1969,10 +2305,16 @@ function ClientPortalRoute({ token }) {
     );
   }
 
-  return <ClientPortal order={order} updateOrder={updateOrder} error={error} syncStatus={syncStatus} onRefresh={refreshOrder} />;
+  return <ClientPortal order={order} events={events} updateOrder={updateOrder} error={error} syncStatus={syncStatus} onRefresh={refreshOrder} />;
 }
 
-function ClientPortal({ order, updateOrder, error = '', syncStatus = '', onRefresh }) {
+function ClientPortal({ order, events = [], updateOrder, error = '', syncStatus = '', onRefresh }) {
+  const [quoteComment, setQuoteComment] = useState(order?.quote?.customerComment || '');
+  const [photoError, setPhotoError] = useState('');
+  useEffect(() => {
+    setQuoteComment(order?.quote?.customerComment || '');
+  }, [order?.id, order?.quote?.customerComment]);
+
   if (!order) {
     return (
       <main className="client-portal">
@@ -1983,20 +2325,57 @@ function ClientPortal({ order, updateOrder, error = '', syncStatus = '', onRefre
     );
   }
 
-  const updateClient = (key, value) => updateOrder((current) => ({
-    ...current,
-    client: { ...current.client, [key]: value },
-    status: 'inspection',
-  }));
-  const updatePart = (id, key, value) => updateOrder((current) => ({
-    ...current,
-    status: 'waiting_parts',
-    parts: (current.parts.length ? current.parts : materializeQuoteParts(current.quote.parts))
-      .map((part) => (part.id === id ? { ...part, [key]: value, updatedAt: new Date().toISOString() } : part)),
-  }));
-  const addPartPhoto = (id, file) => {
-    readPhotoFile(file, (dataUrl) => updatePart(id, 'photoDataUrl', dataUrl), () => {}, { type: 'Foto repuesto', orderId: order.id, target: 'parts' });
+  const updateClient = (key, value) => updateOrder(
+    { client: { [key]: value } },
+    (current) => ({
+      ...current,
+      client: { ...current.client, [key]: value },
+      status: 'inspection',
+    }),
+  );
+  const trackedParts = (current) => (current.parts.length ? current.parts : materializeQuoteParts(current.quote.parts, current.parts));
+  const updatePart = (id, key, value) => {
+    updateOrder(
+      { parts: [{ id, [key]: value }] },
+      (current) => ({
+        ...current,
+        status: 'waiting_parts',
+        parts: trackedParts(current)
+          .map((part) => (part.id === id ? { ...part, [key]: value, updatedAt: new Date().toISOString() } : part)),
+      }),
+    );
   };
+  const addPartPhoto = (id, file) => {
+    readPhotoFile(file, (dataUrl) => updatePart(id, 'photoDataUrl', dataUrl), setPhotoError, { type: 'Foto repuesto', orderId: order.id, target: 'parts' });
+  };
+  const decideQuote = (approved) => {
+    const decidedAt = new Date().toISOString();
+    const patch = {
+      quote: {
+        approved,
+        rejected: !approved,
+        customerComment: quoteComment,
+        decidedAt,
+      },
+      ...(approved && order.quote?.parts?.length ? { parts: materializeQuoteParts(order.quote.parts, order.parts || []) } : {}),
+    };
+    updateOrder(
+      patch,
+      (current) => ({
+        ...current,
+        status: approved ? 'waiting_parts' : 'quote_draft',
+        quote: {
+          ...current.quote,
+          approved,
+          rejected: !approved,
+          customerComment: quoteComment,
+          decidedAt,
+        },
+        parts: approved && current.quote.parts.length ? materializeQuoteParts(current.quote.parts, current.parts) : current.parts,
+      }),
+    );
+  };
+  const total = quoteTotal(order.quote || {});
 
   return (
     <main className="client-portal">
@@ -2052,10 +2431,39 @@ function ClientPortal({ order, updateOrder, error = '', syncStatus = '', onRefre
       </section>
 
       <section className="panel">
+        <PanelTitle icon={FileText} title="CotizaciÃ³n" subtitle="Detalle enviado por el taller para aprobar o rechazar." />
+        {order.quote?.note && <InlineAlert tone="amber" title="Condiciones" body={order.quote.note} />}
+        <div className="stack">
+          <ClientQuoteItems title="Mano de obra" items={order.quote?.labor || []} />
+          <ClientQuoteItems title="Repuestos" items={order.quote?.parts || []} />
+          <ClientQuoteItems title="Extras" items={order.quote?.extras || []} />
+        </div>
+        <Textarea label="Comentario para el taller" value={quoteComment} onChange={setQuoteComment} placeholder="Ej: Apruebo, pero necesito el auto antes del viernes." />
+        <div className="quote-total">
+          <span>Total</span>
+          <strong>{money(total)}</strong>
+        </div>
+        <div className="button-row">
+          <button className="secondary-button" type="button" onClick={() => decideQuote(true)} disabled={order.quote?.approved}>
+            <Check size={17} />
+            Aprobar cotizaciÃ³n
+          </button>
+          <button className="secondary-button" type="button" onClick={() => decideQuote(false)} disabled={order.quote?.rejected}>
+            <AlertTriangle size={17} />
+            Rechazar cotizaciÃ³n
+          </button>
+        </div>
+        <div className="status-note">
+          Estado: {order.quote?.approved ? 'aprobada' : order.quote?.rejected ? 'rechazada' : order.quote?.sent ? 'enviada' : 'pendiente'}
+        </div>
+      </section>
+
+      <section className="panel">
         <PanelTitle icon={PackageCheck} title="Estado de repuestos" subtitle="Informa si compraste, llega, se retraso o tienes dudas." />
         <InlineAlert tone="amber" title="Confirmacion" body="Cada cambio se guarda contra la API local del taller. Usa Actualizar si necesitas comprobar el ultimo estado." />
+        {photoError && <InlineAlert tone="red" title="Foto no cargada" body={photoError} />}
         <div className="stack">
-          {(order.parts.length ? order.parts : materializeQuoteParts(order.quote.parts)).map((part) => (
+          {trackedParts(order).map((part) => (
             <div className="subcard" key={part.id}>
               <strong>{part.name || 'Repuesto'}</strong>
               <div className="form-grid compact">
@@ -2070,6 +2478,9 @@ function ClientPortal({ order, updateOrder, error = '', syncStatus = '', onRefre
                   </select>
                 </label>
                 <Input label="Fecha estimada" value={part.dueDate || ''} onChange={(value) => updatePart(part.id, 'dueDate', value)} />
+                <Input label="Proveedor" value={part.supplier || ''} onChange={(value) => updatePart(part.id, 'supplier', value)} />
+                <Input label="SKU / OEM" value={part.sku || ''} onChange={(value) => updatePart(part.id, 'sku', value.toUpperCase())} />
+                <Input label="Cantidad" value={part.quantity || 1} onChange={(value) => updatePart(part.id, 'quantity', value)} />
               </div>
               <Textarea label="Comentario" value={part.notes || ''} onChange={(value) => updatePart(part.id, 'notes', value)} />
               <label className="photo-slot small">
@@ -2093,7 +2504,49 @@ function ClientPortal({ order, updateOrder, error = '', syncStatus = '', onRefre
           )}
         </div>
       </section>
+
+      <section className="panel">
+        <PanelTitle icon={Clock} title="Linea de tiempo" subtitle="Eventos visibles de la orden." />
+        <CompactTimeline events={events} />
+      </section>
     </main>
+  );
+}
+
+function ClientQuoteItems({ title, items = [] }) {
+  if (!items.length) return null;
+  return (
+    <div className="subcard">
+      <strong>{title}</strong>
+      {items.map((item) => (
+        <div className="check-row readonly" key={item.id || item.name}>
+          <span>{item.name || 'Item'}</span>
+          <strong>{money(normalizeQuoteAmount(item.amount))}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function CompactTimeline({ events = [] }) {
+  const visibleEvents = events
+    .filter((event) => event?.at || event?.createdAt || event?.label || event?.message)
+    .slice(-8)
+    .reverse();
+  if (!visibleEvents.length) return <EmptyState title="Sin eventos visibles" body="Aun no hay eventos publicados para esta orden." />;
+  return (
+    <div className="stack">
+      {visibleEvents.map((event, index) => {
+        const when = event.at || event.createdAt || '';
+        return (
+          <div className="check-row readonly" key={event.id || `${event.type || 'event'}-${when || index}`}>
+            <Clock size={14} />
+            <span>{event.label || event.message || event.type || 'Evento'}</span>
+            {when && <small>{new Date(when).toLocaleString('es-CL')}</small>}
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
@@ -2273,14 +2726,14 @@ function Inspection({ order, updateOrder }) {
   );
 }
 
-function Quote({ order, updateOrder }) {
+function Quote({ order, updateOrder, currentUser }) {
   const updateQuoteList = (listName, id, key, value) => {
     updateOrder((current) => ({
       ...current,
       status: 'quote_draft',
       quote: {
         ...current.quote,
-        [listName]: current.quote[listName].map((item) => (item.id === id ? { ...item, [key]: key === 'amount' ? Number(value) : value } : item)),
+        [listName]: current.quote[listName].map((item) => (item.id === id ? { ...item, [key]: key === 'amount' ? validQuoteAmount(value) : value } : item)),
         sent: false,
         approved: false,
         rejected: false,
@@ -2300,6 +2753,21 @@ function Quote({ order, updateOrder }) {
         rejected: false,
         decidedAt: '',
       },
+    }));
+  };
+  const removeQuoteItem = (listName, id) => {
+    updateOrder((current) => ({
+      ...current,
+      status: 'quote_draft',
+      quote: {
+        ...current.quote,
+        [listName]: current.quote[listName].filter((item) => item.id !== id),
+        sent: false,
+        approved: false,
+        rejected: false,
+        decidedAt: '',
+      },
+      ...(listName === 'parts' ? { parts: current.parts.filter((part) => part.id !== id) } : {}),
     }));
   };
   const updateQuoteStage = (stageId, key, value) => {
@@ -2349,13 +2817,13 @@ function Quote({ order, updateOrder }) {
   const generate = async () => {
     try {
       const text = await generateWorkflowAi('quote', order);
-      updateOrder((current) => ({
+      updateOrder((current) => orderWithEvent({
         ...current,
         status: 'quote_sent',
-        quote: { ...current.quote, sent: true, rejected: false },
+        quote: { ...current.quote, sent: true, sentAt: new Date().toISOString(), rejected: false },
         parts: current.quote.parts.length ? materializeQuoteParts(current.quote.parts, current.parts) : current.parts,
         aiMessages: { ...current.aiMessages, quote: text },
-      }));
+      }, 'quote_sent', currentUser?.id || 'coordinator', 'Cotizacion marcada como enviada.', { channel: 'whatsapp' }));
     } catch (error) {
       updateOrder((current) => ({
         ...current,
@@ -2364,7 +2832,7 @@ function Quote({ order, updateOrder }) {
     }
   };
   const decideQuote = (approved) => {
-    updateOrder((current) => ({
+    updateOrder((current) => orderWithEvent({
       ...current,
       status: approved ? 'waiting_parts' : 'quote_draft',
       quote: {
@@ -2374,7 +2842,7 @@ function Quote({ order, updateOrder }) {
         decidedAt: new Date().toISOString(),
       },
       parts: approved && current.quote.parts.length ? materializeQuoteParts(current.quote.parts, current.parts) : current.parts,
-    }));
+    }, approved ? 'quote_approved' : 'quote_rejected', currentUser?.id || 'coordinator', approved ? 'Cliente aprueba cotizacion.' : 'Cliente rechaza cotizacion.', { source: 'internal' }));
   };
 
   return (
@@ -2408,9 +2876,9 @@ function Quote({ order, updateOrder }) {
             </div>
           ))}
         </div>
-        <QuoteList title="Mano de obra" items={order.quote.labor} onChange={(id, key, value) => updateQuoteList('labor', id, key, value)} onAdd={() => addQuoteItem('labor', 'Nuevo trabajo')} />
-        <QuoteList title="Repuestos" items={order.quote.parts} onChange={(id, key, value) => updateQuoteList('parts', id, key, value)} onAdd={() => addQuoteItem('parts', 'Nuevo repuesto')} />
-        <QuoteList title="Extras" items={order.quote.extras} onChange={(id, key, value) => updateQuoteList('extras', id, key, value)} onAdd={() => addQuoteItem('extras', 'Gestion adicional')} />
+        <QuoteList title="Mano de obra" items={order.quote.labor} onChange={(id, key, value) => updateQuoteList('labor', id, key, value)} onAdd={() => addQuoteItem('labor', 'Nuevo trabajo')} onRemove={(id) => removeQuoteItem('labor', id)} />
+        <QuoteList title="Repuestos" items={order.quote.parts} onChange={(id, key, value) => updateQuoteList('parts', id, key, value)} onAdd={() => addQuoteItem('parts', 'Nuevo repuesto')} onRemove={(id) => removeQuoteItem('parts', id)} />
+        <QuoteList title="Extras" items={order.quote.extras} onChange={(id, key, value) => updateQuoteList('extras', id, key, value)} onAdd={() => addQuoteItem('extras', 'Gestion adicional')} onRemove={(id) => removeQuoteItem('extras', id)} />
         <Textarea label="Condiciones" value={order.quote.note} onChange={(value) => updateOrder({ status: 'quote_draft', quote: { ...order.quote, note: value, sent: false, approved: false, rejected: false, decidedAt: '' } })} />
         <Textarea label="Comentario / decision del cliente" value={order.quote.customerComment} onChange={(value) => updateOrder({ quote: { ...order.quote, customerComment: value } })} />
         <div className="quote-total">
@@ -2436,13 +2904,13 @@ function Quote({ order, updateOrder }) {
         </div>
       </section>
       <AiPanel title="Mensaje de cotización" body={order.aiMessages.quote || 'La IA generará un texto claro para WhatsApp con valor, repuestos, condiciones y próximos pasos.'}>
-        <WhatsAppButton phone={order.client.phone} text={order.aiMessages.quote || generateQuoteMessage(order)} label="Enviar cotización por WhatsApp" enabled={order.client.contactConsent} />
+        <WhatsAppButton phone={order.client.phone} text={order.aiMessages.quote || generateQuoteMessage(order)} label="Enviar cotización por WhatsApp" enabled={order.client.contactConsent} onOpen={(type) => updateOrder((current) => orderWithEvent(current, type, currentUser?.id || 'coordinator', 'WhatsApp de cotizacion abierto.', { channel: 'whatsapp', target: 'quote' }))} />
       </AiPanel>
     </div>
   );
 }
 
-function Parts({ order, updateOrder }) {
+function Parts({ order, updateOrder, currentUser }) {
   const [photoError, setPhotoError] = useState('');
   const [sheetError, setSheetError] = useState('');
   const [generatingPartId, setGeneratingPartId] = useState('');
@@ -2450,7 +2918,7 @@ function Parts({ order, updateOrder }) {
     updateOrder((current) => ({
       ...current,
       status: 'waiting_parts',
-      parts: [...current.parts, { id: crypto.randomUUID(), name: '', owner: 'client', status: 'pending', dueDate: '', notes: '', price: '', photoDataUrl: '', validatedBy: '', identificationSheet: '', identificationSheetGeneratedAt: '' }],
+      parts: [...current.parts, { id: crypto.randomUUID(), name: '', owner: 'client', status: 'pending', dueDate: '', notes: '', price: '', supplier: '', sku: '', quantity: 1, unitCost: '', purchaseStatus: 'not_requested', photoDataUrl: '', validatedBy: '', identificationSheet: '', identificationSheetGeneratedAt: '' }],
     }));
   };
   const updatePart = (id, key, value) => {
@@ -2461,6 +2929,13 @@ function Parts({ order, updateOrder }) {
   };
   const addPartPhoto = (id, file) => {
     readPhotoFile(file, (dataUrl) => updatePart(id, 'photoDataUrl', dataUrl), setPhotoError, { type: 'Foto repuesto', orderId: order.id, target: 'parts' });
+  };
+  const removePart = (id) => {
+    if (!window.confirm('Quitar este repuesto del seguimiento?')) return;
+    updateOrder((current) => ({
+      ...current,
+      parts: current.parts.filter((part) => part.id !== id),
+    }));
   };
   const generatePartSheet = async (part) => {
     if (!part.name) {
@@ -2553,10 +3028,32 @@ function Parts({ order, updateOrder }) {
                 </label>
                 <Input label="Llega / fecha" value={part.dueDate} onChange={(value) => updatePart(part.id, 'dueDate', value)} />
                 <Input label="Precio" value={part.price} onChange={(value) => updatePart(part.id, 'price', value)} />
+                <Input label="Proveedor" value={part.supplier || ''} onChange={(value) => updatePart(part.id, 'supplier', value)} />
+                <Input label="SKU / OEM" value={part.sku || ''} onChange={(value) => updatePart(part.id, 'sku', value.toUpperCase())} />
+                <Input label="Cantidad" value={part.quantity || 1} onChange={(value) => updatePart(part.id, 'quantity', value)} />
+                <Input label="Costo compra" value={part.unitCost || ''} onChange={(value) => updatePart(part.id, 'unitCost', value)} />
+                <label>
+                  Compra
+                  <select value={part.purchaseStatus || 'not_requested'} onChange={(event) => updatePart(part.id, 'purchaseStatus', event.target.value)}>
+                    <option value="not_requested">No solicitada</option>
+                    <option value="quoted">Cotizada</option>
+                    <option value="ordered">Pedida</option>
+                    <option value="received">Recibida</option>
+                    <option value="returned">Devuelta</option>
+                  </select>
+                </label>
               </div>
               <Textarea label="Notas" value={part.notes} onChange={(value) => updatePart(part.id, 'notes', value)} />
               <div className="form-grid compact">
-                <Input label="Validado por" value={part.validatedBy || ''} onChange={(value) => updatePart(part.id, 'validatedBy', value)} />
+                <label>
+                  Validado por
+                  <select value={part.validatedBy || ''} onChange={(event) => updatePart(part.id, 'validatedBy', event.target.value)}>
+                    <option value="">Pendiente</option>
+                    {workshopUsers.filter((user) => user.role === 'mechanic' || user.role === 'admin').map((user) => (
+                      <option key={user.id} value={user.id}>{user.name}</option>
+                    ))}
+                  </select>
+                </label>
                 <label className="photo-slot small">
                   <Camera size={18} />
                   <span>Foto/codigo del repuesto</span>
@@ -2593,6 +3090,10 @@ function Parts({ order, updateOrder }) {
                   </button>
                 </div>
               </div>
+              <button className="tiny-button danger-text" type="button" onClick={() => removePart(part.id)}>
+                <Trash2 size={14} />
+                Quitar repuesto
+              </button>
             </div>
           ))}
           {!order.parts.length && (
@@ -2611,7 +3112,7 @@ function Parts({ order, updateOrder }) {
         </div>
       </section>
       <AiPanel title="WhatsApp de repuestos" body={order.aiMessages.parts || generatePartsMessage(order)}>
-        <WhatsAppButton phone={order.client.phone} text={order.aiMessages.parts || generatePartsMessage(order)} label="Enviar seguimiento por WhatsApp" enabled={order.client.contactConsent} />
+        <WhatsAppButton phone={order.client.phone} text={order.aiMessages.parts || generatePartsMessage(order)} label="Enviar seguimiento por WhatsApp" enabled={order.client.contactConsent} onOpen={(type) => updateOrder((current) => orderWithEvent(current, type, currentUser?.id || 'coordinator', 'WhatsApp de repuestos abierto.', { channel: 'whatsapp', target: 'parts' }))} />
       </AiPanel>
     </div>
   );
@@ -2692,11 +3193,16 @@ function Execution({ order, updateOrder }) {
   );
 }
 
-function Handoff({ order, updateOrder }) {
+function Handoff({ order, updateOrder, currentUser }) {
+  const billing = order.billing || {};
+  const total = quoteTotal(order.quote || {});
+  const paid = normalizeQuoteAmount(billing.totalPaid);
+  const balance = Math.max(0, total - paid);
+  const updateBilling = (key, value) => updateOrder({ billing: { ...billing, [key]: value } });
   const generate = async () => {
     try {
       const text = await generateWorkflowAi('handoff', order);
-      updateOrder((current) => ({ ...current, finalNotes: text, status: 'closed' }));
+      updateOrder((current) => orderWithEvent({ ...current, finalNotes: text, status: 'closed' }, 'order_closed', currentUser?.id || 'coordinator', 'Orden cerrada con resumen IA.', {}));
     } catch (error) {
       updateOrder((current) => ({ ...current, finalNotes: `Error Gemini: ${error.message}` }));
     }
@@ -2706,20 +3212,42 @@ function Handoff({ order, updateOrder }) {
     <div className="two-column">
       <section className="panel">
         <PanelTitle icon={ShieldCheck} title="Entrega" subtitle="Resumen simple para cerrar con confianza y dejar historial." />
+        <div className="prep-banner amber">
+          <strong>Control comercial</strong>
+          <span>Total {money(total)} - pagado {money(paid)} - saldo {money(balance)}</span>
+        </div>
+        <div className="form-grid compact">
+          <label>
+            Estado pago
+            <select value={billing.status || 'pending'} onChange={(event) => updateBilling('status', event.target.value)}>
+              <option value="pending">Pendiente</option>
+              <option value="partial">Parcial</option>
+              <option value="paid">Pagado</option>
+              <option value="overdue">Vencido</option>
+              <option value="cancelled">Anulado</option>
+            </select>
+          </label>
+          <Input label="Tipo documento" value={billing.invoiceType || ''} onChange={(value) => updateBilling('invoiceType', value)} placeholder="Boleta, factura, nota venta" />
+          <Input label="Folio / documento" value={billing.documentNumber || ''} onChange={(value) => updateBilling('documentNumber', value)} />
+          <Input label="Pagado" value={billing.totalPaid || ''} onChange={(value) => updateBilling('totalPaid', value)} />
+          <Input label="Medio de pago" value={billing.paymentMethod || ''} onChange={(value) => updateBilling('paymentMethod', value)} />
+          <Input label="Fecha pago" value={billing.paidAt || ''} onChange={(value) => updateBilling('paidAt', value)} />
+        </div>
+        <Textarea label="Notas comerciales" value={billing.notes || ''} onChange={(value) => updateBilling('notes', value)} />
         <Textarea label="Resumen final" value={order.finalNotes} onChange={(value) => updateOrder({ finalNotes: value })} />
         <div className="button-row">
           <button className="ai-button" onClick={generate}>
             <Bot size={18} />
             Generar cierre con IA
           </button>
-          <button className="secondary-button" onClick={() => updateOrder({ status: 'closed' })}>
+          <button className="secondary-button" onClick={() => updateOrder((current) => orderWithEvent({ ...current, status: 'closed' }, 'order_closed', currentUser?.id || 'coordinator', 'Orden cerrada desde entrega.', {}))}>
             <Check size={17} />
             Cerrar orden
           </button>
         </div>
       </section>
       <AiPanel title="Mensaje final" body={order.finalNotes || generateDeliverySummary(order)}>
-        <WhatsAppButton phone={order.client.phone} text={order.finalNotes || generateDeliverySummary(order)} label="Enviar cierre por WhatsApp" enabled={order.client.contactConsent} />
+        <WhatsAppButton phone={order.client.phone} text={order.finalNotes || generateDeliverySummary(order)} label="Enviar cierre por WhatsApp" enabled={order.client.contactConsent} onOpen={(type) => updateOrder((current) => orderWithEvent(current, type, currentUser?.id || 'coordinator', 'WhatsApp de cierre abierto.', { channel: 'whatsapp', target: 'handoff' }))} />
       </AiPanel>
     </div>
   );
@@ -2829,7 +3357,7 @@ function PhotoStrip({ photos, onRemove }) {
   );
 }
 
-function QuoteList({ title, items, onChange, onAdd }) {
+function QuoteList({ title, items, onChange, onAdd, onRemove }) {
   return (
     <div className="quote-list">
       <div className="quote-list-title">
@@ -2842,7 +3370,13 @@ function QuoteList({ title, items, onChange, onAdd }) {
       {items.map((item) => (
         <div className="quote-item" key={item.id}>
           <input aria-label={`${title} concepto`} value={item.name} onChange={(event) => onChange(item.id, 'name', event.target.value)} />
-          <input aria-label={`${title} monto`} type="number" value={item.amount} onChange={(event) => onChange(item.id, 'amount', event.target.value)} />
+          <input aria-label={`${title} monto`} type="number" min="0" value={item.amount} onChange={(event) => onChange(item.id, 'amount', event.target.value)} />
+          {onRemove && (
+            <button className="tiny-button danger-text" type="button" onClick={() => onRemove(item.id)} aria-label={`Eliminar ${item.name || title}`}>
+              <Trash2 size={14} />
+              Quitar
+            </button>
+          )}
         </div>
       ))}
     </div>
@@ -2862,7 +3396,7 @@ function Checklist({ items }) {
   );
 }
 
-function WhatsAppButton({ phone, text, label, enabled = true }) {
+function WhatsAppButton({ phone, text, label, enabled = true, onOpen }) {
   const cleanPhone = normalizeWhatsAppPhone(phone);
   const canSend = Boolean(cleanPhone && enabled);
   const href = canSend ? `https://wa.me/${cleanPhone}?text=${encodeURIComponent(text || '')}` : '';
@@ -2875,6 +3409,13 @@ function WhatsAppButton({ phone, text, label, enabled = true }) {
       aria-disabled={!canSend}
       tabIndex={canSend ? 0 : -1}
       title={!enabled ? 'Cliente no autorizo contacto por WhatsApp' : cleanPhone ? undefined : 'WhatsApp invalido'}
+      onClick={(event) => {
+        if (!canSend) {
+          event.preventDefault();
+          return;
+        }
+        onOpen?.('whatsapp_opened');
+      }}
     >
       <MessageCircle size={18} />
       {label}

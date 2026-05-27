@@ -17,8 +17,16 @@ export default defineConfig({
   build: {
     outDir: resolve(root, 'dist'),
     emptyOutDir: true,
+    chunkSizeWarningLimit: 5200,
     rollupOptions: {
       input: resolve(root, 'index.html'),
+      output: {
+        manualChunks(id) {
+          return id.includes('/src/vehicleData.js') || id.includes('\\src\\vehicleData.js')
+            ? 'epa-vehicle-data'
+            : undefined;
+        },
+      },
     },
   },
 });

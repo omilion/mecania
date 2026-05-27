@@ -1,4 +1,4 @@
-import { createPhotoRecord, newOrder, STORAGE_KEY } from './domain.js';
+import { createPhotoRecord, materializeQuoteParts, newOrder, STORAGE_KEY } from './domain.js';
 import { localAi } from './aiService.js';
 
 export const DEFAULT_API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || '/api';
@@ -70,12 +70,42 @@ export async function loadOrdersState(options = {}) {
   return withLocalFallback(
     options,
     async () => {
-      const remoteState = await request('/orders', { options });
+      const remoteState = await request(queryPath('/orders', options.query), { options });
+      if (options.query) return remoteState;
       if (remoteState?.orders?.length) return remoteState;
       const localState = readLocalState(options);
       return localState.orders?.length ? { ...localState, source: 'local-empty-api' } : remoteState;
     },
     () => readLocalState(options),
+  );
+}
+
+export async function loadClientsState(options = {}) {
+  return withLocalFallback(
+    options,
+    () => request(queryPath('/clients', options.query), { options }),
+    () => {
+      const clients = deriveLocalClients(readLocalState(options).orders || []);
+      const search = String(options.query?.search || '').trim();
+      const filtered = search ? clients.filter((client) => matchesLocalClientSearch(client, search)) : clients;
+      const offset = Number(options.query?.offset || 0);
+      const limit = Number(options.query?.limit || 0);
+      const paged = limit ? filtered.slice(offset, offset + limit) : filtered.slice(offset);
+      return { clients: paged, total: filtered.length, search, offset, limit: limit || filtered.length, source: 'local' };
+    },
+  );
+}
+
+export async function updateClientRecord(clientId, client, options = {}) {
+  requireValue(clientId, 'clientId');
+  return withLocalFallback(
+    options,
+    () => request(`/clients/${encodeURIComponent(clientId)}`, {
+      method: 'PATCH',
+      body: { client },
+      options,
+    }),
+    () => updateLocalClientRecord(clientId, client, options),
   );
 }
 
@@ -176,6 +206,28 @@ export async function loadClientOrder(token, options = {}) {
   );
 }
 
+export async function loadClientOrderEvents(token, options = {}) {
+  requireValue(token, 'token');
+  return withLocalFallback(
+    options,
+    async () => request(`/client/orders/${encodeURIComponent(token)}/events`, { options: { ...options, authToken: false } }),
+    () => {
+      const orderId = decodeLocalToken(token);
+      const state = readLocalState(options);
+      const order = state.orders.find((item) => item.id === orderId);
+      const events = Array.isArray(order?.events) ? order.events : [];
+      return {
+        orderId,
+        number: order?.number || '',
+        status: order?.status || '',
+        createdAt: order?.createdAt || '',
+        updatedAt: order?.updatedAt || '',
+        events: events.map(normalizeClientEvent).filter(Boolean),
+      };
+    },
+  );
+}
+
 export async function pollClientOrder(token, options = {}) {
   requireValue(token, 'token');
   const {
@@ -202,12 +254,13 @@ export async function pollClientOrder(token, options = {}) {
 export async function updateClientOrder(token, patch, options = {}) {
   requireValue(token, 'token');
   if (!patch || typeof patch !== 'object') throw new ApiClientError('patch debe ser un objeto.');
+  const transportPatch = materializeClientOrderPatch(patch);
 
   return withLocalFallback(
     options,
     async () => unwrapOrder(await request(`/client/orders/${encodeURIComponent(token)}`, {
       method: 'PATCH',
-      body: { patch },
+      body: { patch: transportPatch },
       options: { ...options, authToken: false },
     })),
     () => {
@@ -216,7 +269,7 @@ export async function updateClientOrder(token, patch, options = {}) {
       const state = readLocalState(options);
       const current = state.orders.find((order) => order.id === orderId);
       if (!current) return null;
-      const updated = touchOrder({ ...current, ...patch });
+      const updated = touchOrder({ ...current, ...sanitizeLocalClientPatch(current, transportPatch) });
       upsertLocalOrder(updated, options);
       return updated;
     },
@@ -285,6 +338,16 @@ export function apiUrl(path, options = {}) {
   const cleanPath = path.startsWith('/') ? path : `/${path}`;
   if (!baseUrl) return cleanPath;
   return `${baseUrl.replace(/\/$/, '')}${cleanPath}`;
+}
+
+function queryPath(path, query = {}) {
+  const params = new URLSearchParams();
+  Object.entries(query || {}).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    params.set(key, String(value));
+  });
+  const suffix = params.toString();
+  return suffix ? `${path}?${suffix}` : path;
 }
 
 async function request(path, { method = 'GET', body, options = {} } = {}) {
@@ -375,6 +438,17 @@ function normalizeAuthSession(responseBody = {}) {
   };
 }
 
+function normalizeClientEvent(event = {}) {
+  const at = event.at || event.createdAt || event.updatedAt || '';
+  const label = event.label || event.message || event.type || '';
+  if (!at && !label) return null;
+  return {
+    ...event,
+    at,
+    label,
+  };
+}
+
 function localClientOrderView(order = {}) {
   return {
     id: order.id,
@@ -403,6 +477,86 @@ function localClientOrderView(order = {}) {
   };
 }
 
+function deriveLocalClients(orders = []) {
+  const records = new Map();
+  for (const order of orders) {
+    const client = order.client || {};
+    const id = localClientRecordId(client);
+    if (!id) continue;
+    const record = records.get(id) || {
+      id,
+      name: client.name || '',
+      phone: client.phone || '',
+      email: client.email || '',
+      address: client.address || '',
+      contactConsent: client.contactConsent !== false,
+      orderIds: [],
+      orderNumbers: [],
+      vehiclePlates: [],
+      openOrders: 0,
+      closedOrders: 0,
+      archivedOrders: 0,
+      lastOrderAt: '',
+    };
+    if (!record.name && client.name) record.name = client.name;
+    if (!record.phone && client.phone) record.phone = client.phone;
+    if (!record.email && client.email) record.email = client.email;
+    if (!record.address && client.address) record.address = client.address;
+    record.orderIds.push(order.id);
+    if (order.number) record.orderNumbers.push(order.number);
+    if (order.vehicle?.plate && !record.vehiclePlates.includes(order.vehicle.plate)) record.vehiclePlates.push(order.vehicle.plate);
+    if (order.status === 'archived' || order.archivedAt || order.deletedAt) record.archivedOrders += 1;
+    else if (order.status === 'closed') record.closedOrders += 1;
+    else record.openOrders += 1;
+    const lastAt = order.updatedAt || order.createdAt || '';
+    if (lastAt > record.lastOrderAt) record.lastOrderAt = lastAt;
+    records.set(id, record);
+  }
+  return [...records.values()].sort((left, right) => String(right.lastOrderAt || '').localeCompare(String(left.lastOrderAt || '')));
+}
+
+function updateLocalClientRecord(clientId, patch = {}, options = {}) {
+  const state = readLocalState(options);
+  let updatedOrders = 0;
+  const orders = state.orders.map((order) => {
+    if (localClientRecordId(order.client || {}) !== clientId) return order;
+    updatedOrders += 1;
+    return touchOrder({ ...order, client: { ...(order.client || {}), ...patch } });
+  });
+  if (!updatedOrders) throw new ApiClientError('Cliente no encontrado en datos locales.', { status: 404 });
+  writeLocalState({ ...state, orders }, options);
+  const client = deriveLocalClients(orders).find((record) => record.orderIds.some((orderId) => state.orders.some((order) => order.id === orderId && localClientRecordId(order.client || {}) === clientId)));
+  return { client, updatedOrders, source: 'local' };
+}
+
+function matchesLocalClientSearch(record, search) {
+  const haystack = normalizeLocalSearch([
+    record.name,
+    record.phone,
+    record.email,
+    record.address,
+    ...(record.orderNumbers || []),
+    ...(record.vehiclePlates || []),
+  ].filter(Boolean).join(' '));
+  const needle = normalizeLocalSearch(search);
+  const compactHaystack = haystack.replace(/[^a-z0-9]/g, '');
+  const compactNeedle = needle.replace(/[^a-z0-9]/g, '');
+  return haystack.includes(needle) || (compactNeedle && compactHaystack.includes(compactNeedle));
+}
+
+function localClientRecordId(client = {}) {
+  const rawKey = client.phone || client.email || client.name || '';
+  const normalized = normalizeLocalSearch(rawKey).replace(/[^a-z0-9]/g, '');
+  return normalized ? `local-${normalized.slice(0, 48)}` : '';
+}
+
+function normalizeLocalSearch(value = '') {
+  return String(value || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase();
+}
+
 function absoluteFromApi(path, options = {}) {
   if (!path || path.startsWith('http') || path.startsWith('data:')) return path;
   const baseUrl = options.apiBaseUrl ?? DEFAULT_API_BASE_URL;
@@ -418,7 +572,7 @@ async function withLocalFallback(options, remote, fallback) {
   try {
     return await remote();
   } catch (error) {
-    if ([401, 403].includes(error.status) && options.authToken !== false) throw error;
+    if ([401, 403].includes(error.status)) throw error;
     if (LOCAL_FALLBACK_DISABLED && options.allowLocalFallback !== true) throw error;
     if (options.throwOnApiError) throw error;
     return fallback(error);
@@ -503,6 +657,68 @@ function removeLocalUpload(upload, options = {}) {
     return changed ? touchOrder(nextOrder) : order;
   });
   writeLocalState({ ...state, orders }, options);
+}
+
+function materializeClientOrderPatch(patch = {}) {
+  if (!Object.prototype.hasOwnProperty.call(patch, 'parts')) return patch;
+  const quoteParts = patch.quote?.parts || [];
+  const parts = Array.isArray(patch.parts) && patch.parts.length
+    ? patch.parts
+    : materializeQuoteParts(quoteParts, Array.isArray(patch.parts) ? patch.parts : []);
+  return {
+    ...patch,
+    parts,
+  };
+}
+
+function sanitizeLocalClientPatch(current = {}, patch = {}) {
+  const allowed = {};
+  if (patch.client && typeof patch.client === 'object') {
+    allowed.client = {
+      ...(current.client || {}),
+      ...pickFields(patch.client, ['name', 'phone', 'email', 'address', 'contactConsent']),
+    };
+  }
+  if (patch.quote && typeof patch.quote === 'object') {
+    allowed.quote = {
+      ...(current.quote || {}),
+      ...pickFields(patch.quote, ['approved', 'rejected', 'customerComment', 'decidedAt']),
+    };
+  }
+  if ('parts' in patch) {
+    allowed.parts = sanitizeLocalClientParts(current, patch.parts);
+  }
+  return allowed;
+}
+
+function sanitizeLocalClientParts(current = {}, incomingParts = []) {
+  if (!Array.isArray(incomingParts)) return current.parts || [];
+  const currentParts = Array.isArray(current.parts) && current.parts.length
+    ? current.parts
+    : materializeQuoteParts(current.quote?.parts || [], current.parts || []);
+  const byKey = new Map();
+  for (const part of incomingParts.filter((item) => item && typeof item === 'object')) {
+    if (part.id) byKey.set(String(part.id), part);
+    if (part.name) byKey.set(String(part.name).toLowerCase(), part);
+  }
+  return currentParts.map((part) => {
+    const incoming = byKey.get(String(part.id || '')) || byKey.get(String(part.name || '').toLowerCase());
+    if (!incoming) return part;
+    return {
+      ...part,
+      ...pickFields(incoming, ['status', 'dueDate', 'notes', 'price', 'photoDataUrl']),
+      id: part.id,
+      name: part.name,
+      owner: part.owner,
+    };
+  });
+}
+
+function pickFields(source = {}, keys = []) {
+  return keys.reduce((next, key) => {
+    if (Object.prototype.hasOwnProperty.call(source, key)) next[key] = source[key];
+    return next;
+  }, {});
 }
 
 function touchOrder(order) {

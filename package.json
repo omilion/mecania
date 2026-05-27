@@ -9,8 +9,9 @@
     "build:vehicles": "node tools/build-epa-vehicle-index.mjs tmp-epa/vehicles.csv src/vehicleData.js",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
+    "lint": "node tools/lint.mjs",
     "test": "node --test",
-    "check": "npm test && npm run build",
+    "check": "npm run lint && npm test && npm run build",
     "seed:demo": "node tools/seed-demo.mjs",
     "smoke": "node tools/smoke.mjs"
   },

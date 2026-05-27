@@ -15,12 +15,14 @@ import {
   materializeQuoteParts,
   newOrder,
   normalizeOrder,
+  normalizeQuoteAmount,
   normalizeWhatsAppPhone,
   prepScore,
   quotePartItems,
   quoteStages,
   quoteTotal,
   readinessBadge,
+  reconcileOrderEvents,
   seedOrder,
   updateOrderTask,
   vehicleSpec,
@@ -65,6 +67,28 @@ test('quote and parts messages preserve vehicle compatibility data', () => {
 
 test('quoteTotal sums labor, parts and extras', () => {
   assert.equal(quoteTotal(seedOrder().quote), 53000);
+});
+
+test('quote amounts are clamped to non-negative finite values', () => {
+  assert.equal(normalizeQuoteAmount('-100'), 0);
+  assert.equal(normalizeQuoteAmount('abc'), 0);
+  assert.equal(quoteTotal({ labor: [{ id: 'l1', name: 'Trabajo', amount: -10 }], parts: [{ id: 'p1', name: 'Pieza', amount: Number.NaN }], extras: [{ id: 'e1', name: 'Extra', amount: 5000 }] }), 5000);
+});
+
+test('critical quote and close transitions record timestamps and events', () => {
+  const base = normalizeOrder({ quote: { labor: [{ id: 'l1', name: 'Trabajo', amount: 1000 }], parts: [], extras: [] } });
+  const sent = reconcileOrderEvents({ ...base, status: 'quote_sent' }, base, 'coordinator', '2026-05-20T10:00:00.000Z');
+  assert.equal(sent.quote.sent, true);
+  assert.equal(sent.quote.sentAt, '2026-05-20T10:00:00.000Z');
+  assert.equal(sent.events.at(-1).type, 'quote_sent');
+
+  const approved = reconcileOrderEvents({ ...sent, quote: { ...sent.quote, approved: true } }, sent, 'coordinator', '2026-05-20T10:05:00.000Z');
+  assert.equal(approved.quote.decidedAt, '2026-05-20T10:05:00.000Z');
+  assert.equal(approved.events.at(-1).type, 'quote_approved');
+
+  const closed = reconcileOrderEvents({ ...approved, status: 'closed' }, approved, 'coordinator', '2026-05-20T11:00:00.000Z');
+  assert.equal(closed.closedAt, '2026-05-20T11:00:00.000Z');
+  assert.equal(closed.events.at(-1).type, 'order_closed');
 });
 
 test('quote stages are normalized without breaking legacy totals', () => {

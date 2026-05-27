@@ -165,6 +165,7 @@ export const statusLabels = {
   in_progress: 'En ejecución',
   ready_delivery: 'Listo para entrega',
   closed: 'Cerrada',
+  archived: 'Archivada',
 };
 
 export const partStatuses = {
@@ -254,6 +255,9 @@ export const newOrder = () => ({
     year: '',
     engine: '',
     engineLabel: '',
+    vin: '',
+    engineCode: '',
+    oemCodes: '',
     cylinders: '',
     fuel: '',
     transmission: '',
@@ -289,15 +293,26 @@ export const newOrder = () => ({
     extras: [],
     note: '',
     sent: false,
+    sentAt: '',
     approved: false,
     rejected: false,
     customerComment: '',
     decidedAt: '',
   },
+  billing: {
+    status: 'pending',
+    invoiceType: '',
+    documentNumber: '',
+    totalPaid: 0,
+    paymentMethod: '',
+    paidAt: '',
+    notes: '',
+  },
   parts: [],
   executionNotes: '',
   progressPhotos: [],
   finalNotes: '',
+  closedAt: '',
   aiMessages: {},
   assignedTo: 'mechanic',
   assignedAt: '',
@@ -332,6 +347,7 @@ export function normalizeWorkshopOrder(order = {}) {
     client: { ...base.client, ...(order.client || {}) },
     risk: normalizeRisk(order.risk),
     quote: normalizeQuote(order.quote || base.quote),
+    billing: normalizeBilling(order.billing || base.billing),
     photos: Array.isArray(order.photos) ? order.photos : [],
     findings: Array.isArray(order.findings) ? order.findings : [],
     parts: Array.isArray(order.parts) ? order.parts : [],
@@ -834,6 +850,7 @@ export function normalizeOrder(order = {}) {
     vehicle: { ...base.vehicle, ...(isPlainObject(order.vehicle) ? order.vehicle : {}) },
     client: { ...base.client, ...(isPlainObject(order.client) ? order.client : {}) },
     quote: normalizeQuote(order.quote || base.quote),
+    billing: normalizeBilling(order.billing || base.billing),
     photos: asArray(order.photos),
     findings: asArray(order.findings),
     risk: normalizeRisk(order.risk),
@@ -850,6 +867,78 @@ export function normalizeOrder(order = {}) {
 
   if (normalized.assignedTo && !normalized.assignedAt) normalized.assignedAt = normalized.updatedAt || normalized.createdAt || new Date().toISOString();
   return normalized;
+}
+
+export function reconcileOrderEvents(nextOrder = {}, previousOrder = {}, actorId = '', timestamp = new Date().toISOString()) {
+  const previous = normalizeOrder(previousOrder || {});
+  let next = normalizeOrder(nextOrder || {});
+  const validActorId = validWorkshopUserId(actorId) ? actorId : next.updatedByUserId || previous.updatedByUserId || '';
+
+  const quoteWasSent = Boolean(previous.quote.sent || previous.quote.sentAt || previous.status === 'quote_sent');
+  const quoteIsSent = Boolean(next.quote.sent || next.quote.sentAt || next.status === 'quote_sent');
+  if (quoteIsSent && !quoteWasSent) {
+    const sentAt = next.quote.sentAt || timestamp;
+    const stamped = {
+      ...next,
+      quote: { ...next.quote, sent: true, sentAt },
+    };
+    next = hasNewEvent(previous, stamped, 'quote_sent') ? stamped : appendOrderEvent(stamped, {
+      type: 'quote_sent',
+      userId: validActorId,
+      message: 'Cotizacion enviada al cliente.',
+      meta: { channel: 'whatsapp', total: quoteTotal(next.quote) },
+      createdAt: sentAt,
+    });
+  } else if (quoteIsSent && !next.quote.sentAt) {
+    next = { ...next, quote: { ...next.quote, sent: true, sentAt: timestamp } };
+  }
+
+  const previousDecision = previous.quote.approved ? 'approved' : previous.quote.rejected ? 'rejected' : '';
+  const nextDecision = next.quote.approved ? 'approved' : next.quote.rejected ? 'rejected' : '';
+  if (nextDecision && nextDecision !== previousDecision) {
+    const decidedAt = next.quote.decidedAt || timestamp;
+    const approved = nextDecision === 'approved';
+    const eventType = approved ? 'quote_approved' : 'quote_rejected';
+    const stamped = {
+      ...next,
+      quote: {
+        ...next.quote,
+        approved,
+        rejected: !approved,
+        decidedAt,
+      },
+    };
+    next = hasNewEvent(previous, stamped, eventType) ? stamped : appendOrderEvent(stamped, {
+      type: eventType,
+      userId: validActorId,
+      message: approved ? 'Cliente aprueba cotizacion.' : 'Cliente rechaza cotizacion.',
+      meta: { total: quoteTotal(next.quote) },
+      createdAt: decidedAt,
+    });
+  } else if (nextDecision && !next.quote.decidedAt) {
+    next = { ...next, quote: { ...next.quote, decidedAt: timestamp } };
+  }
+
+  if (next.status === 'closed' && previous.status !== 'closed') {
+    const closedAt = next.closedAt || timestamp;
+    const stamped = {
+      ...next,
+      closedAt,
+    };
+    next = hasNewEvent(previous, stamped, 'order_closed') ? stamped : appendOrderEvent(stamped, {
+      type: 'order_closed',
+      userId: validActorId,
+      message: 'Orden cerrada.',
+      meta: {},
+      createdAt: closedAt,
+    });
+  }
+
+  return next;
+}
+
+export function appendTraceEvent(order = {}, event = {}) {
+  return appendOrderEvent(normalizeOrder(order), event);
 }
 
 export function assignOrder(order, assigneeId, actorId = '') {
@@ -1091,6 +1180,7 @@ export function generatePartIdentificationSheet(order, targetPart = {}) {
     !vehicle.model && 'modelo',
     !vehicle.year && 'ano',
     !vehicle.engine && 'motor/cilindrada',
+    !vehicle.vin && 'VIN',
     !vehicle.plate && 'patente',
   ].filter(Boolean);
   const confidence = missingVehicle.length || !part.name ? 'BAJA' : vehicle.engineLabel || vehicle.fuel || vehicle.transmission ? 'MEDIA' : 'MEDIA-BAJA';
@@ -1103,6 +1193,9 @@ export function generatePartIdentificationSheet(order, targetPart = {}) {
     `Vehiculo: ${vehicleName(order)}`,
     `Datos tecnicos desde software: ${vehicleSpec(order)}.`,
     vehicle.engineLabel ? `Motor catalogado: ${vehicle.engineLabel}` : 'Motor catalogado: no registrado.',
+    vehicle.vin ? `VIN: ${vehicle.vin}` : 'VIN: no registrado.',
+    vehicle.engineCode ? `Codigo motor: ${vehicle.engineCode}` : 'Codigo motor: no registrado.',
+    vehicle.oemCodes ? `Codigos OEM del vehiculo: ${vehicle.oemCodes}` : 'Codigos OEM del vehiculo: no registrados.',
     vehicle.mileage ? `Kilometraje: ${vehicle.mileage}` : 'Kilometraje: no registrado.',
     '',
     '2. REPUESTO SOLICITADO',
@@ -1110,6 +1203,9 @@ export function generatePartIdentificationSheet(order, targetPart = {}) {
     `Responsable compra: ${partOwnerLabel(part.owner)}`,
     `Estado actual: ${partStatuses[part.status] || part.status || 'Pendiente'}`,
     part.price ? `Precio registrado: ${part.price}` : 'Precio registrado: no informado.',
+    part.sku ? `Codigo/SKU registrado: ${part.sku}` : 'Codigo/SKU registrado: no informado.',
+    part.supplier ? `Proveedor registrado: ${part.supplier}` : 'Proveedor registrado: no informado.',
+    part.quantity ? `Cantidad: ${part.quantity}` : 'Cantidad: no informada.',
     part.dueDate ? `Fecha/llegada: ${part.dueDate}` : 'Fecha/llegada: no informada.',
     part.notes ? `Notas del taller/cliente: ${part.notes}` : 'Notas del taller/cliente: sin notas.',
     part.validatedBy ? `Validado por: ${part.validatedBy}` : 'Validado por: pendiente.',
@@ -1120,7 +1216,7 @@ export function generatePartIdentificationSheet(order, targetPart = {}) {
     'La ficha no reemplaza validacion con VIN, catalogo oficial, codigo OEM o muestra cuando aplique.',
     '',
     '4. PARAMETROS CRITICOS',
-    'Codigos OEM/equivalencias: NO CONFIRMADO en el software.',
+    `Codigos OEM/equivalencias: ${part.sku || vehicle.oemCodes || 'NO CONFIRMADO en el software'}.`,
     'Medidas fisicas en mm: NO CONFIRMADO en el software.',
     'Parametros internos (temperatura, presion, voltaje, resistencia): NO CONFIRMADO salvo que aparezcan en notas.',
     'Conectores, sellos o empaquetaduras: validar con catalogo/foto antes de comprar.',
@@ -1175,8 +1271,14 @@ function partOwnerLabel(owner = '') {
 
 export function quoteTotal(quote) {
   const stagedItems = quoteStages(quote).flatMap((stage) => asArray(stage.items));
-  if (stagedItems.length) return stagedItems.reduce((sum, item) => sum + Number(item.amount || 0), 0);
-  return [...asArray(quote.labor), ...asArray(quote.parts), ...asArray(quote.extras)].reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  if (stagedItems.length) return stagedItems.reduce((sum, item) => sum + normalizeQuoteAmount(item.amount), 0);
+  return [...asArray(quote.labor), ...asArray(quote.parts), ...asArray(quote.extras)].reduce((sum, item) => sum + normalizeQuoteAmount(item.amount), 0);
+}
+
+export function normalizeQuoteAmount(value) {
+  const amount = Number(value);
+  if (!Number.isFinite(amount) || amount < 0) return 0;
+  return amount;
 }
 
 export function materializeQuoteParts(quoteParts = [], existingParts = []) {
@@ -1197,6 +1299,11 @@ export function materializeQuoteParts(quoteParts = [], existingParts = []) {
       dueDate: current?.dueDate || '',
       notes: current?.notes || '',
       price: current?.price || part.amount || '',
+      supplier: current?.supplier || part.supplier || '',
+      sku: current?.sku || part.sku || part.oemCode || '',
+      quantity: current?.quantity || part.quantity || 1,
+      unitCost: current?.unitCost || part.unitCost || '',
+      purchaseStatus: current?.purchaseStatus || part.purchaseStatus || 'not_requested',
       photoDataUrl: current?.photoDataUrl || '',
       validatedBy: current?.validatedBy || '',
       identificationSheet: current?.identificationSheet || '',
@@ -1260,6 +1367,23 @@ export function normalizeRisk(risk = {}) {
   };
 }
 
+export function normalizeBilling(billing = {}) {
+  const base = newOrder().billing;
+  const source = isPlainObject(billing) ? billing : {};
+  const status = ['pending', 'partial', 'paid', 'overdue', 'cancelled'].includes(source.status) ? source.status : base.status;
+  return {
+    ...base,
+    ...source,
+    status,
+    invoiceType: cleanText(source.invoiceType || ''),
+    documentNumber: cleanText(source.documentNumber || ''),
+    totalPaid: normalizeQuoteAmount(source.totalPaid),
+    paymentMethod: cleanText(source.paymentMethod || ''),
+    paidAt: source.paidAt || '',
+    notes: cleanText(source.notes || ''),
+  };
+}
+
 export function engineSafetyStatus(order = {}) {
   const risk = normalizeRisk(order.risk);
   const released = risk.safetyStatus === 'cleared' && risk.clearanceNote;
@@ -1303,6 +1427,9 @@ export function vehicleSpec(order) {
     order.vehicle.model && `modelo ${order.vehicle.model}`,
     order.vehicle.year && `año ${order.vehicle.year}`,
     order.vehicle.engine && `motor/cilindrada ${order.vehicle.engine}`,
+    order.vehicle.engineCode && `codigo motor ${order.vehicle.engineCode}`,
+    order.vehicle.vin && `VIN ${order.vehicle.vin}`,
+    order.vehicle.oemCodes && `codigos OEM ${order.vehicle.oemCodes}`,
     order.vehicle.cylinders && `${order.vehicle.cylinders} cilindros`,
     order.vehicle.fuel && `combustible ${order.vehicle.fuel}`,
     order.vehicle.transmission && `transmision ${order.vehicle.transmission}`,
@@ -1331,9 +1458,21 @@ function normalizeQuote(quote) {
     ...source,
     schemaVersion: Number(source.schemaVersion || base.schemaVersion || 2),
     stages: normalizeQuoteStages(source.stages || base.stages),
-    labor: asArray(source.labor),
-    parts: asArray(source.parts),
-    extras: asArray(source.extras),
+    labor: asArray(source.labor).map(normalizeQuoteListItem).filter(Boolean),
+    parts: asArray(source.parts).map(normalizeQuoteListItem).filter(Boolean),
+    extras: asArray(source.extras).map(normalizeQuoteListItem).filter(Boolean),
+  };
+}
+
+function normalizeQuoteListItem(item = {}) {
+  if (!isPlainObject(item)) return null;
+  const name = cleanText(item.name || item.title || '');
+  if (!name) return null;
+  return {
+    ...item,
+    id: String(item.id || crypto.randomUUID()),
+    name,
+    amount: normalizeQuoteAmount(item.amount),
   };
 }
 
@@ -1363,7 +1502,7 @@ function normalizeQuoteStageItem(item = {}) {
     id: String(item.id || crypto.randomUUID()),
     kind: ['labor', 'part', 'extra'].includes(item.kind) ? item.kind : 'labor',
     name,
-    amount: Number(item.amount || 0),
+    amount: normalizeQuoteAmount(item.amount),
     required: item.required !== false,
     materializePart: item.materializePart !== false,
     sourceFindingId: item.sourceFindingId || '',
@@ -1445,6 +1584,11 @@ function appendOrderEvent(order, event) {
     ...order,
     events: nextEvent ? [...asArray(order.events), nextEvent] : asArray(order.events),
   };
+}
+
+function hasNewEvent(previousOrder = {}, nextOrder = {}, type = '') {
+  const previousIds = new Set(asArray(previousOrder.events).map((event) => event.id));
+  return asArray(nextOrder.events).some((event) => event.type === type && !previousIds.has(event.id));
 }
 
 function normalizeOrderEvent(event) {

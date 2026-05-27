@@ -1,11 +1,18 @@
 export const EPA_VEHICLE_SOURCE = 'FuelEconomy.gov EPA vehicles.csv';
 export const EPA_VEHICLE_SOURCE_URL = 'https://www.fueleconomy.gov/feg/download.shtml';
 
-let catalogPromise;
+const loadDefaultVehicleCatalog = createVehicleCatalogLoader(() => import('./vehicleData.js'));
 
 export async function loadVehicleCatalog() {
-  catalogPromise ||= import('./vehicleData.js').then((module) => createVehicleCatalog(module.EPA_VEHICLE_INDEX));
-  return catalogPromise;
+  return loadDefaultVehicleCatalog();
+}
+
+export function createVehicleCatalogLoader(loadData) {
+  let catalogPromise;
+  return async function loadCatalog() {
+    catalogPromise ||= loadData().then((module) => createVehicleCatalog(module.EPA_VEHICLE_INDEX));
+    return catalogPromise;
+  };
 }
 
 export function createVehicleCatalog(index) {

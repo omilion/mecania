@@ -8,6 +8,7 @@ import {
   createClientToken,
   deleteUpload,
   generateAiRemote,
+  loadClientOrderEvents,
   loadOrdersState,
   loadWorkshopUsers,
   loginInternal,
@@ -16,6 +17,7 @@ import {
   pollClientOrder,
   refreshClientToken,
   saveOrder,
+  updateClientOrder,
   uploadPhoto,
 } from '../src/apiClient.js';
 import { STORAGE_KEY, seedOrder } from '../src/domain.js';
@@ -71,6 +73,32 @@ test('internal requests include Authorization bearer from storage', async () => 
   });
 
   assert.equal(calls[0].init.headers.Authorization, 'Bearer token-abc');
+});
+
+test('loadOrdersState sends supported order query params', async () => {
+  const calls = [];
+  await loadOrdersState({
+    apiBaseUrl: 'https://api.example.com',
+    query: { search: 'ana', status: 'active', limit: 20, offset: 40 },
+    fetch: async (url, init) => {
+      calls.push({ url, init });
+      return jsonResponse({ orders: [seedOrder()], total: 1, limit: 20, offset: 40 });
+    },
+  });
+
+  assert.equal(calls[0].url, 'https://api.example.com/orders?search=ana&status=active&limit=20&offset=40');
+});
+
+test('loadOrdersState keeps empty remote query results authoritative', async () => {
+  const localOrder = seedOrder();
+  const state = await loadOrdersState({
+    storage: memoryStorage({ [STORAGE_KEY]: JSON.stringify({ orders: [localOrder], activeId: localOrder.id }) }),
+    query: { search: 'sin-resultados', status: 'active', limit: 20, offset: 0 },
+    fetch: async () => jsonResponse({ orders: [], total: 0, limit: 20, offset: 0 }),
+  });
+
+  assert.deepEqual(state.orders, []);
+  assert.equal(state.total, 0);
 });
 
 test('logoutInternal calls API and clears bearer token', async () => {
@@ -146,6 +174,23 @@ test('client portal requests do not include internal bearer token', async () => 
   assert.equal(calls[0].init.headers, undefined);
 });
 
+test('client event timeline requests do not include internal bearer token', async () => {
+  const storage = memoryStorage({ [AUTH_TOKEN_STORAGE_KEY]: 'token-abc' });
+  const calls = [];
+  const timeline = await loadClientOrderEvents('client-token', {
+    storage,
+    apiBaseUrl: 'https://api.example.com',
+    fetch: async (url, init) => {
+      calls.push({ url, init });
+      return jsonResponse({ events: [{ type: 'created', at: '2026-05-25T12:00:00.000Z', label: 'Orden creada' }] });
+    },
+  });
+
+  assert.equal(calls[0].url, 'https://api.example.com/client/orders/client-token/events');
+  assert.equal(calls[0].init.headers, undefined);
+  assert.equal(timeline.events[0].type, 'created');
+});
+
 test('loadOrdersState falls back to local storage when API is unavailable', async () => {
   const order = seedOrder();
   const storage = memoryStorage({
@@ -178,6 +223,20 @@ test('uploadPhoto returns a local photo record when upload endpoint is unavailab
   assert.equal(uploaded.caption, 'vista');
   assert.equal(uploaded.url, 'data:image/png;base64,abc123');
   assert.ok(uploaded.id);
+});
+
+test('uploadPhoto surfaces API errors when local fallback is disabled', async () => {
+  await assert.rejects(
+    () => uploadPhoto(
+      { dataUrl: 'data:image/png;base64,abc123', type: 'Patente' },
+      {
+        allowLocalFallback: false,
+        throwOnApiError: true,
+        fetch: async () => { throw new Error('offline'); },
+      },
+    ),
+    /API no disponible/,
+  );
 });
 
 test('createClientToken creates a deterministic local token fallback', async () => {
@@ -305,6 +364,95 @@ test('generateAiRemote sends part context to the API', async () => {
   });
 
   assert.equal(result.text, 'ficha remota');
+});
+
+test('updateClientOrder local fallback materializes quote parts and keeps client part fields safe', async () => {
+  const order = {
+    ...seedOrder(),
+    id: 'order-local-client',
+    parts: [],
+    quote: {
+      ...seedOrder().quote,
+      parts: [{ id: 'qp1', name: 'Filtro aceite', amount: 2000 }],
+    },
+  };
+  const storage = memoryStorage({
+    [STORAGE_KEY]: JSON.stringify({ orders: [order], activeId: order.id }),
+  });
+
+  const updated = await updateClientOrder(`local-${order.id}`, {
+    parts: [{
+      id: 'qp1',
+      name: 'Filtro premium',
+      owner: 'mechanic',
+      status: 'received',
+      dueDate: '2026-05-30',
+      notes: 'Comprado por cliente',
+      price: 2500,
+      photoDataUrl: 'data:image/png;base64,abc',
+    }],
+  }, {
+    storage,
+    fetch: async () => { throw new Error('offline'); },
+  });
+
+  assert.equal(updated.parts.length, 1);
+  assert.equal(updated.parts[0].name, 'Filtro aceite');
+  assert.equal(updated.parts[0].owner, 'client');
+  assert.equal(updated.parts[0].status, 'received');
+  assert.equal(updated.parts[0].dueDate, '2026-05-30');
+  assert.equal(updated.parts[0].notes, 'Comprado por cliente');
+  assert.equal(updated.parts[0].price, 2500);
+  assert.equal(updated.parts[0].photoDataUrl, 'data:image/png;base64,abc');
+});
+
+test('updateClientOrder sends only the provided client patch without auth', async () => {
+  const calls = [];
+  await updateClientOrder('client-token', {
+    quote: {
+      approved: true,
+      customerComment: 'Autorizo el trabajo.',
+      decidedAt: '2026-05-25T12:00:00.000Z',
+    },
+  }, {
+    storage: memoryStorage({ [AUTH_TOKEN_STORAGE_KEY]: 'token-abc' }),
+    apiBaseUrl: 'https://api.example.com',
+    fetch: async (url, init) => {
+      calls.push({ url, init });
+      return jsonResponse({ order: seedOrder() });
+    },
+  });
+
+  assert.equal(calls[0].url, 'https://api.example.com/client/orders/client-token');
+  assert.equal(calls[0].init.headers['Content-Type'], 'application/json');
+  assert.equal(calls[0].init.headers.Authorization, undefined);
+  assert.deepEqual(JSON.parse(calls[0].init.body), {
+    patch: {
+      quote: {
+        approved: true,
+        customerComment: 'Autorizo el trabajo.',
+        decidedAt: '2026-05-25T12:00:00.000Z',
+      },
+    },
+  });
+});
+
+test('updateClientOrder local client patch preserves existing client fields', async () => {
+  const order = seedOrder();
+  const storage = memoryStorage({
+    [STORAGE_KEY]: JSON.stringify({ orders: [order], activeId: order.id }),
+  });
+
+  const updated = await updateClientOrder(`local-${order.id}`, {
+    client: { phone: '+56911112222' },
+  }, {
+    storage,
+    fetch: async () => { throw new Error('offline'); },
+  });
+
+  assert.equal(updated.client.phone, '+56911112222');
+  assert.equal(updated.client.name, order.client.name);
+  assert.equal(updated.client.email, order.client.email);
 });
 
 test('remote API errors can be surfaced when throwOnApiError is enabled', async () => {
