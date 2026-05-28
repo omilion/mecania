@@ -486,7 +486,7 @@ function App() {
           </div>
           <div className="topbar-actions">
             <AccountMenu currentUser={currentUser} onLogout={logout} />
-            {section === 'jobs' && (
+            {section === 'jobs' && jobMode !== 'list' && (
               <select
                 value={activeOrder?.id}
                 onChange={(event) => selectOrder(event.target.value)}
@@ -837,24 +837,16 @@ function Jobs({ orders, activeOrder, currentUser, users, openJob, jobStep, setJo
   if (jobMode === 'detail') {
     return (
       <section className="job-detail">
-        <div className="button-row no-margin">
-          <button className="secondary-button" onClick={() => setJobMode('list')}>
-            Volver a trabajos
-          </button>
-          <button className="primary-button" onClick={addOrder}>
-            <Plus size={17} />
-            Primera visita
-          </button>
-        </div>
+        <JobFocusTopbar order={activeOrder} step={jobStep} onExit={() => setJobMode('list')} onNewVisit={addOrder} />
         <JobHeader order={activeOrder} />
-        <AssignmentPanel order={activeOrder} users={users} currentUser={currentUser} updateOrder={updateOrder} />
         <WorkflowProgress step={jobStep} order={activeOrder} />
         <WorkflowStepper step={jobStep} setStep={setJobStep} order={activeOrder} />
-        <WorkflowNav step={jobStep} setStep={setJobStep} order={activeOrder} />
         {storageError && <InlineAlert tone="red" title="Guardado local con riesgo" body={storageError} />}
         <div className="wizard-surface">
           <WizardStep step={jobStep} order={activeOrder} updateOrder={updateOrder} currentUser={currentUser} />
         </div>
+        <WorkflowNav step={jobStep} setStep={setJobStep} order={activeOrder} />
+        <AssignmentDisclosure order={activeOrder} users={users} currentUser={currentUser} updateOrder={updateOrder} />
       </section>
     );
   }
@@ -937,16 +929,48 @@ function FirstVisitPage({ order, jobStep, setJobStep, updateOrder, currentUser, 
       <div className="wizard-surface">
         <WizardStep step={jobStep} order={order} updateOrder={updateOrder} setJobStep={setJobStep} currentUser={currentUser} />
       </div>
-      <details className="assignment-disclosure">
-        <summary>
-          <User size={16} />
-          <span>Revisar equipo asignado</span>
-          <AssigneeLine order={order} compact />
-        </summary>
-        <AssignmentPanel order={order} users={users} currentUser={currentUser} updateOrder={updateOrder} />
-      </details>
       <WorkflowNav step={jobStep} setStep={setJobStep} order={order} />
+      <AssignmentDisclosure order={order} users={users} currentUser={currentUser} updateOrder={updateOrder} />
     </section>
+  );
+}
+
+function JobFocusTopbar({ order, step, onExit, onNewVisit }) {
+  const stepIndex = workflowSteps.findIndex((item) => item.id === step);
+  const currentStep = workflowSteps[stepIndex] || workflowSteps[0];
+  return (
+    <div className="focus-topbar">
+      <div>
+        <p className="eyebrow">Trabajo en foco</p>
+        <h2>{order.number} - {vehicleName(order)}</h2>
+        <span>Paso {stepIndex + 1} de {workflowSteps.length}: {currentStep.label} - {statusLabels[order.status] || order.status}</span>
+      </div>
+      <div className="button-row no-margin">
+        <button className="secondary-button" type="button" onClick={onExit}>
+          Volver
+        </button>
+        <button className="primary-button" type="button" onClick={onNewVisit}>
+          <Plus size={17} />
+          Primera visita
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function AssignmentDisclosure({ order, users, currentUser, updateOrder }) {
+  const summary = orderTasksSummary(order);
+  const assigneeText = userLabel(order.assignments?.mechanic, users) || 'Sin mecanico';
+  return (
+    <details className="assignment-disclosure">
+      <summary>
+        <User size={16} />
+        <span>Equipo y tareas</span>
+        {currentUser.role === 'mechanic' ? <em>{assigneeText}</em> : <AssigneeLine order={order} compact />}
+        {summary.open > 0 && <small>{summary.open} abiertas</small>}
+      </summary>
+      <AssignmentPanel order={order} users={users} currentUser={currentUser} updateOrder={updateOrder} />
+    </details>
   );
 }
 
@@ -1054,6 +1078,7 @@ function AssignmentPanel({ order, users, currentUser, updateOrder }) {
     }));
   };
   const summary = orderTasksSummary(order);
+  const promisedAt = formatDateTimeLabel(order.promisedAt);
 
   return (
     <section className="panel assignment-panel">
@@ -1065,67 +1090,84 @@ function AssignmentPanel({ order, users, currentUser, updateOrder }) {
       </div>
       <div className="assignment-grid">
         {Object.entries(assignmentLabels).map(([key, label]) => (
-          <label key={key}>
-            {label}
-            <select value={assignments[key] || ''} onChange={(event) => setAssignment(key, event.target.value)} disabled={!canAssign}>
-              <option value="">Sin asignar</option>
-              {users
-                .filter((user) => assignmentRoles[key].includes(user.role))
-                .map((user) => (
-                  <option key={user.id} value={user.id}>
-                    {user.name} - {user.roleLabel}
-                  </option>
-                ))}
-            </select>
-          </label>
+          canAssign ? (
+            <label key={key}>
+              {label}
+              <select value={assignments[key] || ''} onChange={(event) => setAssignment(key, event.target.value)}>
+                <option value="">Sin asignar</option>
+                {users
+                  .filter((user) => assignmentRoles[key].includes(user.role))
+                  .map((user) => (
+                    <option key={user.id} value={user.id}>
+                      {user.name} - {user.roleLabel}
+                    </option>
+                  ))}
+              </select>
+            </label>
+          ) : (
+            <ReadOnlyField key={key} label={label} value={userLabel(assignments[key], users) || 'Sin asignar'} />
+          )
         ))}
       </div>
       <div className="form-grid compact">
-        <label>
-          Prioridad orden
-          <select value={order.priority || 'normal'} onChange={(event) => updateOrder({ priority: event.target.value })} disabled={!canAssign}>
-            {Object.entries(taskPriorities).map(([value, label]) => (
-              <option key={value} value={value}>{label}</option>
-            ))}
-          </select>
-        </label>
-        <Input label="Fecha promesa" value={order.promisedAt || ''} onChange={(value) => updateOrder({ promisedAt: value })} placeholder="2026-05-20 18:00" />
-        <Textarea label="Nota interna de coordinación" value={order.internalNotes || ''} onChange={(value) => updateOrder({ internalNotes: value })} placeholder="Ej: cliente solo puede recibir martes, validar pago antes de comprar repuesto..." />
-        <div className="task-composer">
-          <Input label="Nueva tarea" value={taskTitle} onChange={setTaskTitle} placeholder="Ej: validar foto de repuesto, llamar cliente, revisar fuga" />
-          <div className="form-grid compact">
+        {canAssign ? (
+          <>
             <label>
-              Asignar a
-              <select value={taskAssignee} onChange={(event) => setTaskAssignee(event.target.value)} disabled={!canManageTasks}>
-                {users.map((user) => (
-                  <option key={user.id} value={user.id}>{user.name}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              Prioridad
-              <select value={taskPriority} onChange={(event) => setTaskPriority(event.target.value)} disabled={!canManageTasks}>
+              Prioridad orden
+              <select value={order.priority || 'normal'} onChange={(event) => updateOrder({ priority: event.target.value })}>
                 {Object.entries(taskPriorities).map(([value, label]) => (
                   <option key={value} value={value}>{label}</option>
                 ))}
               </select>
             </label>
-            <label>
-              Abrir en
-              <select value={taskTargetStep} onChange={(event) => setTaskTargetStep(event.target.value)} disabled={!canManageTasks}>
-                {Object.entries(workflowTargetSteps).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
-                ))}
-              </select>
-            </label>
+            <Input label="Fecha promesa" value={promisedAt.inputValue} onChange={(value) => updateOrder({ promisedAt: value })} placeholder="2026-05-20 18:00" />
+            <Textarea label="Nota interna de coordinación" value={order.internalNotes || ''} onChange={(value) => updateOrder({ internalNotes: value })} placeholder="Ej: cliente solo puede recibir martes, validar pago antes de comprar repuesto..." />
+          </>
+        ) : (
+          <>
+            <ReadOnlyField label="Prioridad orden" value={taskPriorities[order.priority || 'normal']} />
+            <ReadOnlyField label="Fecha promesa" value={promisedAt.displayValue} />
+            {order.internalNotes && <ReadOnlyField label="Nota interna de coordinacion" value={order.internalNotes} multiline />}
+          </>
+        )}
+        {canManageTasks ? (
+          <div className="task-composer">
+            <Input label="Nueva tarea" value={taskTitle} onChange={setTaskTitle} placeholder="Ej: validar foto de repuesto, llamar cliente, revisar fuga" />
+            <div className="form-grid compact">
+              <label>
+                Asignar a
+                <select value={taskAssignee} onChange={(event) => setTaskAssignee(event.target.value)}>
+                  {users.map((user) => (
+                    <option key={user.id} value={user.id}>{user.name}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Prioridad
+                <select value={taskPriority} onChange={(event) => setTaskPriority(event.target.value)}>
+                  {Object.entries(taskPriorities).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Abrir en
+                <select value={taskTargetStep} onChange={(event) => setTaskTargetStep(event.target.value)}>
+                  {Object.entries(workflowTargetSteps).map(([value, label]) => (
+                    <option key={value} value={value}>{label}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <Input label="Fecha compromiso" value={taskDueDate} onChange={setTaskDueDate} placeholder="2026-05-20 o 'hoy PM'" />
+            <button className="secondary-button" type="button" onClick={addTask}>
+              <Plus size={17} />
+              Agregar tarea
+            </button>
           </div>
-          <Input label="Fecha compromiso" value={taskDueDate} onChange={setTaskDueDate} placeholder="2026-05-20 o 'hoy PM'" />
-          <button className="secondary-button" type="button" onClick={addTask} disabled={!canManageTasks}>
-            <Plus size={17} />
-            Agregar tarea
-          </button>
-          {!canManageTasks && <p className="permission-note">Solo administración o coordinación crea nuevas tareas internas.</p>}
-        </div>
+        ) : (
+          <p className="permission-note">Solo administracion o coordinacion crea nuevas tareas internas.</p>
+        )}
       </div>
       <div className="task-list compact-list">
         {(order.tasks || []).map((task) => (
@@ -1280,8 +1322,8 @@ function Clients({ orders, openJob, search, setSearch, remoteState, syncError, o
           <div className="client-row" key={client.id || client.phone || client.name || clientOrders[0]?.id}>
             <div>
               <strong>{client.name || 'Cliente sin registrar'}</strong>
-              <ClientInlineEditor client={client} onUpdateClient={onUpdateClient} />
               <span>{client.phone || 'Sin WhatsApp'} · {client.address || 'Sin direccion'}</span>
+              <ClientInlineEditor client={client} onUpdateClient={onUpdateClient} />
             </div>
             <div className="button-row">
               {clientOrders.slice(0, 3).map((order) => (
@@ -1335,16 +1377,19 @@ function ClientInlineEditor({ client, onUpdateClient }) {
   };
 
   return (
-    <div className="grid two compact-inputs client-editor">
-      <Input label="Nombre" value={draft.name} onChange={(value) => setDraft((current) => ({ ...current, name: value }))} />
-      <Input label="WhatsApp" value={draft.phone} onChange={(value) => setDraft((current) => ({ ...current, phone: value }))} />
-      <Input label="Email" value={draft.email} onChange={(value) => setDraft((current) => ({ ...current, email: value }))} />
-      <Input label="Direccion" value={draft.address} onChange={(value) => setDraft((current) => ({ ...current, address: value }))} />
-      <button className="tiny-button" type="button" onClick={save} disabled={saving || !onUpdateClient || !client.id}>
-        {saving ? 'Guardando' : 'Guardar cliente'}
-      </button>
-      {error && <span className="small-muted">{error}</span>}
-    </div>
+    <details className="client-editor-disclosure">
+      <summary>Editar cliente</summary>
+      <div className="grid two compact-inputs client-editor">
+        <Input label="Nombre" value={draft.name} onChange={(value) => setDraft((current) => ({ ...current, name: value }))} />
+        <Input label="WhatsApp" value={draft.phone} onChange={(value) => setDraft((current) => ({ ...current, phone: value }))} />
+        <Input label="Email" value={draft.email} onChange={(value) => setDraft((current) => ({ ...current, email: value }))} />
+        <Input label="Direccion" value={draft.address} onChange={(value) => setDraft((current) => ({ ...current, address: value }))} />
+        <button className="tiny-button" type="button" onClick={save} disabled={saving || !onUpdateClient || !client.id}>
+          {saving ? 'Guardando' : 'Guardar cliente'}
+        </button>
+        {error && <span className="small-muted">{error}</span>}
+      </div>
+    </details>
   );
 }
 
@@ -2125,6 +2170,10 @@ function VisitPhotos({ order, updateOrder, mode }) {
   const labels = mode === 'general'
     ? ['Frontal', 'Trasera', 'Lateral izquierdo', 'Lateral derecho', 'Patente', 'Odómetro', 'Tablero']
     : ['Zona a revisar', 'Daño previo', 'Fuga visible', 'Pieza afectada'];
+  const capturedRequired = mode === 'general'
+    ? requiredReceptionPhotoTypes.filter((type) => order.photos.some((photo) => photo.type === type)).length
+    : order.photos.filter((photo) => !requiredReceptionPhotoTypes.includes(photo.type)).length;
+  const requiredTotal = mode === 'general' ? requiredReceptionPhotoTypes.length : 1;
   const addPhoto = (label, file) => {
     readPhotoFile(file, (dataUrl, uploaded) => {
       updateOrder((current) => ({
@@ -2153,6 +2202,10 @@ function VisitPhotos({ order, updateOrder, mode }) {
         title={mode === 'general' ? 'Fotos generales de recepcion' : 'Fotos de zonas a revisar'}
         subtitle={mode === 'general' ? 'Antes de tocar el auto: estado externo, tablero y odometro.' : 'Nombra cada zona para evitar confusiones con el cliente.'}
       />
+      <div className={`prep-banner ${capturedRequired >= requiredTotal ? 'green' : 'amber'}`}>
+        <strong>{capturedRequired}/{requiredTotal} fotos minimas</strong>
+        <span>{capturedRequired >= requiredTotal ? 'Evidencia minima lista para continuar.' : 'Captura las fotos clave antes de avanzar.'}</span>
+      </div>
       <div className="photo-grid">
         {labels.map((type) => (
           <label className="photo-slot" key={type}>
@@ -2376,21 +2429,30 @@ function ClientPortal({ order, events = [], updateOrder, error = '', syncStatus 
     );
   };
   const total = quoteTotal(order.quote || {});
+  const expectedAction = clientExpectedAction(order);
 
   return (
     <main className="client-portal">
       {error && <InlineAlert tone="red" title="Sincronizacion" body={error} />}
       {syncStatus && <InlineAlert tone="green" title="Estado" body={syncStatus} />}
+      <section className="panel client-portal-hero">
+        <div>
+          <p className="eyebrow">Orden {order.number}</p>
+          <h1>{vehicleName(order)}</h1>
+          <span>{statusLabels[order.status] || order.status}</span>
+        </div>
+        <InlineAlert tone={expectedAction.tone} title={expectedAction.title} body={expectedAction.body} />
+        <button className="secondary-button" onClick={onRefresh}>
+          <Clock size={17} />
+          Actualizar
+        </button>
+      </section>
       <section className="panel">
         <div className="panel-header">
           <div>
             <h2>Datos para la orden</h2>
             <p>{order.number} - {vehicleName(order)}</p>
           </div>
-          <button className="secondary-button" onClick={onRefresh}>
-            <Clock size={17} />
-            Actualizar
-          </button>
         </div>
         <div className="form-grid">
           <Input label="Nombre" value={order.client.name} onChange={(value) => updateClient('name', value)} />
@@ -2431,7 +2493,7 @@ function ClientPortal({ order, events = [], updateOrder, error = '', syncStatus 
       </section>
 
       <section className="panel">
-        <PanelTitle icon={FileText} title="CotizaciÃ³n" subtitle="Detalle enviado por el taller para aprobar o rechazar." />
+        <PanelTitle icon={FileText} title="Cotizacion" subtitle="Detalle enviado por el taller para aprobar o rechazar." />
         {order.quote?.note && <InlineAlert tone="amber" title="Condiciones" body={order.quote.note} />}
         <div className="stack">
           <ClientQuoteItems title="Mano de obra" items={order.quote?.labor || []} />
@@ -2446,11 +2508,11 @@ function ClientPortal({ order, events = [], updateOrder, error = '', syncStatus 
         <div className="button-row">
           <button className="secondary-button" type="button" onClick={() => decideQuote(true)} disabled={order.quote?.approved}>
             <Check size={17} />
-            Aprobar cotizaciÃ³n
+            Aprobar cotizacion
           </button>
           <button className="secondary-button" type="button" onClick={() => decideQuote(false)} disabled={order.quote?.rejected}>
             <AlertTriangle size={17} />
-            Rechazar cotizaciÃ³n
+            Rechazar cotizacion
           </button>
         </div>
         <div className="status-note">
@@ -2463,9 +2525,19 @@ function ClientPortal({ order, events = [], updateOrder, error = '', syncStatus 
         <InlineAlert tone="amber" title="Confirmacion" body="Cada cambio se guarda contra la API local del taller. Usa Actualizar si necesitas comprobar el ultimo estado." />
         {photoError && <InlineAlert tone="red" title="Foto no cargada" body={photoError} />}
         <div className="stack">
-          {trackedParts(order).map((part) => (
-            <div className="subcard" key={part.id}>
-              <strong>{part.name || 'Repuesto'}</strong>
+          {trackedParts(order).map((part, index) => {
+            const statusLabel = partStatuses[part.status] || part.status || 'Pendiente';
+            const statusTone = ['received', 'validated'].includes(part.status) ? 'green' : part.status === 'wrong' || part.status === 'delayed' ? 'red' : 'amber';
+            return (
+            <details className="subcard part-card" key={part.id} open={index === 0}>
+              <summary className="part-summary">
+                <div>
+                  <strong>{part.name || 'Repuesto'}</strong>
+                  <span>{part.dueDate ? `Fecha estimada ${part.dueDate}` : 'Sin fecha estimada'}</span>
+                </div>
+                <Badge tone={statusTone}>{statusLabel}</Badge>
+              </summary>
+              <div className="part-editor">
               <div className="form-grid compact">
                 <label>
                   Estado
@@ -2497,8 +2569,10 @@ function ClientPortal({ order, events = [], updateOrder, error = '', syncStatus 
                   }}
                 />
               )}
-            </div>
-          ))}
+              </div>
+            </details>
+            );
+          })}
           {!order.parts.length && !order.quote.parts.length && (
             <EmptyState title="Sin repuestos informados" body="El mecánico aún no agregó repuestos para seguimiento." />
           )}
@@ -2511,6 +2585,29 @@ function ClientPortal({ order, events = [], updateOrder, error = '', syncStatus 
       </section>
     </main>
   );
+}
+
+function clientExpectedAction(order) {
+  if (!order.quote?.approved && !order.quote?.rejected && (order.quote?.sent || quoteTotal(order.quote || {}) > 0)) {
+    return {
+      tone: 'amber',
+      title: 'Accion requerida',
+      body: 'Revisa la cotizacion y aprueba o rechaza para que el taller siga.',
+    };
+  }
+  const pendingParts = (order.parts || []).filter((part) => !['received', 'validated'].includes(part.status));
+  if (pendingParts.length) {
+    return {
+      tone: 'amber',
+      title: 'Seguimiento de repuestos',
+      body: 'Actualiza el estado de cada repuesto comprado o en camino.',
+    };
+  }
+  return {
+    tone: 'green',
+    title: 'Sin accion urgente',
+    body: 'La orden no requiere una decision inmediata del cliente.',
+  };
 }
 
 function ClientQuoteItems({ title, items = [] }) {
@@ -2619,8 +2716,18 @@ function Inspection({ order, updateOrder }) {
           </div>
         )}
         <div className="stack">
-          {order.findings.map((finding) => (
-            <div className="subcard" key={finding.id}>
+          {order.findings.map((finding, index) => {
+            const findingTone = finding.severity === 'critico' ? 'red' : finding.severity === 'alto' ? 'amber' : 'green';
+            return (
+            <details className="subcard finding-card" key={finding.id} open={index === 0}>
+              <summary className="part-summary">
+                <div>
+                  <strong>{finding.symptom || finding.area || 'Hallazgo sin sintoma'}</strong>
+                  <span>{finding.area} - {finding.result || 'falla'} - {finding.quoteMode || 'cotizar'}</span>
+                </div>
+                <Badge tone={findingTone}>{finding.severity || 'medio'}</Badge>
+              </summary>
+              <div className="part-editor">
               <div className="subcard-header">
                 <div className="form-grid compact full-width">
                   <label>
@@ -2707,8 +2814,10 @@ function Inspection({ order, updateOrder }) {
                 <Input label="Insumos" value={finding.supplies || ''} onChange={(value) => updateFinding(finding.id, 'supplies', value)} placeholder="Ej: refrigerante, abrazaderas" />
                 <Input label="Riesgo si no se hace" value={finding.customerRisk || ''} onChange={(value) => updateFinding(finding.id, 'customerRisk', value)} />
               </div>
-            </div>
-          ))}
+              </div>
+            </details>
+            );
+          })}
         </div>
         <div className="button-row">
           <button className="secondary-button" onClick={addFinding}>
@@ -2994,6 +3103,11 @@ function Parts({ order, updateOrder, currentUser }) {
     }
   };
   const score = prepScore(order);
+  const ownerLabels = {
+    client: 'Cliente compra',
+    mechanic_quote: 'Mecanico cotiza',
+    mechanic_buy: 'Mecanico compra',
+  };
 
   return (
     <div className="two-column">
@@ -3006,8 +3120,19 @@ function Parts({ order, updateOrder, currentUser }) {
         {photoError && <InlineAlert tone="red" title="Foto no cargada" body={photoError} />}
         {sheetError && <InlineAlert tone="red" title="Ficha tecnica" body={sheetError} />}
         <div className="stack">
-          {order.parts.map((part) => (
-            <div className="subcard" key={part.id}>
+          {order.parts.map((part, index) => {
+            const statusLabel = partStatuses[part.status] || part.status || 'Pendiente';
+            const statusTone = ['received', 'validated'].includes(part.status) ? 'green' : part.status === 'wrong' || part.status === 'delayed' ? 'red' : 'amber';
+            return (
+            <details className="subcard part-card" key={part.id} open={index === 0}>
+              <summary className="part-summary">
+                <div>
+                  <strong>{part.name || 'Repuesto sin nombre'}</strong>
+                  <span>{ownerLabels[part.owner] || 'Sin responsable'}{part.dueDate ? ` - llega ${part.dueDate}` : ''}</span>
+                </div>
+                <Badge tone={statusTone}>{statusLabel}</Badge>
+              </summary>
+              <div className="part-editor">
               <Input label="Repuesto" value={part.name} onChange={(value) => updatePart(part.id, 'name', value)} />
               <div className="form-grid compact">
                 <label>
@@ -3094,8 +3219,10 @@ function Parts({ order, updateOrder, currentUser }) {
                 <Trash2 size={14} />
                 Quitar repuesto
               </button>
-            </div>
-          ))}
+              </div>
+            </details>
+            );
+          })}
           {!order.parts.length && (
             <EmptyState title="Sin repuestos en seguimiento" body="Agrega repuestos manualmente o aprueba/prepara una cotización con repuestos para materializarlos aquí." />
           )}
@@ -3198,11 +3325,13 @@ function Handoff({ order, updateOrder, currentUser }) {
   const total = quoteTotal(order.quote || {});
   const paid = normalizeQuoteAmount(billing.totalPaid);
   const balance = Math.max(0, total - paid);
+  const paymentStatus = billing.status || 'pending';
+  const canCloseOrder = balance <= 0 || paymentStatus === 'paid' || paymentStatus === 'cancelled';
   const updateBilling = (key, value) => updateOrder({ billing: { ...billing, [key]: value } });
   const generate = async () => {
     try {
       const text = await generateWorkflowAi('handoff', order);
-      updateOrder((current) => orderWithEvent({ ...current, finalNotes: text, status: 'closed' }, 'order_closed', currentUser?.id || 'coordinator', 'Orden cerrada con resumen IA.', {}));
+      updateOrder({ finalNotes: text });
     } catch (error) {
       updateOrder((current) => ({ ...current, finalNotes: `Error Gemini: ${error.message}` }));
     }
@@ -3216,6 +3345,13 @@ function Handoff({ order, updateOrder, currentUser }) {
           <strong>Control comercial</strong>
           <span>Total {money(total)} - pagado {money(paid)} - saldo {money(balance)}</span>
         </div>
+        {!canCloseOrder && (
+          <InlineAlert
+            tone="amber"
+            title="Cierre bloqueado por saldo"
+            body="Registra el pago o marca el estado comercial antes de cerrar la orden."
+          />
+        )}
         <div className="form-grid compact">
           <label>
             Estado pago
@@ -3240,7 +3376,7 @@ function Handoff({ order, updateOrder, currentUser }) {
             <Bot size={18} />
             Generar cierre con IA
           </button>
-          <button className="secondary-button" onClick={() => updateOrder((current) => orderWithEvent({ ...current, status: 'closed' }, 'order_closed', currentUser?.id || 'coordinator', 'Orden cerrada desde entrega.', {}))}>
+          <button className="secondary-button" disabled={!canCloseOrder} onClick={() => updateOrder((current) => orderWithEvent({ ...current, status: 'closed' }, 'order_closed', currentUser?.id || 'coordinator', 'Orden cerrada desde entrega.', {}))}>
             <Check size={17} />
             Cerrar orden
           </button>
@@ -3300,9 +3436,10 @@ function PanelTitle({ icon: Icon, title, subtitle }) {
 }
 
 function AiPanel({ title, body, children }) {
+  const defaultOpen = typeof window === 'undefined' || window.matchMedia('(min-width: 681px)').matches;
   return (
     <section className="panel ai-panel">
-      <details className="ai-disclosure" open>
+      <details className="ai-disclosure" open={defaultOpen}>
         <summary>
           <PanelTitle icon={Bot} title={title} subtitle="Borrador editable: el mecánico valida antes de enviar." />
         </summary>
@@ -3329,6 +3466,29 @@ function Textarea({ label, value, onChange, placeholder = '' }) {
       <textarea value={value || ''} placeholder={placeholder} onChange={(event) => onChange(event.target.value)} />
     </label>
   );
+}
+
+function ReadOnlyField({ label, value, multiline = false }) {
+  return (
+    <div className={`readonly-field ${multiline ? 'multiline' : ''}`}>
+      <span>{label}</span>
+      <strong>{value || 'Sin dato'}</strong>
+    </div>
+  );
+}
+
+function formatDateTimeLabel(value) {
+  if (!value) return { inputValue: '', displayValue: 'Sin fecha' };
+  const raw = String(value);
+  const date = new Date(raw);
+  if (Number.isNaN(date.getTime())) return { inputValue: raw, displayValue: raw };
+  return {
+    inputValue: raw.includes('T') ? raw.slice(0, 16) : raw,
+    displayValue: new Intl.DateTimeFormat('es-CL', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    }).format(date),
+  };
 }
 
 function Badge({ tone, children }) {
@@ -3367,17 +3527,26 @@ function QuoteList({ title, items, onChange, onAdd, onRemove }) {
           Agregar
         </button>
       </div>
-      {items.map((item) => (
-        <div className="quote-item" key={item.id}>
-          <input aria-label={`${title} concepto`} value={item.name} onChange={(event) => onChange(item.id, 'name', event.target.value)} />
-          <input aria-label={`${title} monto`} type="number" min="0" value={item.amount} onChange={(event) => onChange(item.id, 'amount', event.target.value)} />
-          {onRemove && (
-            <button className="tiny-button danger-text" type="button" onClick={() => onRemove(item.id)} aria-label={`Eliminar ${item.name || title}`}>
-              <Trash2 size={14} />
-              Quitar
-            </button>
-          )}
-        </div>
+      {items.map((item, index) => (
+        <details className="quote-item-card" key={item.id} open={index === 0}>
+          <summary className="part-summary">
+            <div>
+              <strong>{item.name || title}</strong>
+              <span>{money(normalizeQuoteAmount(item.amount))}</span>
+            </div>
+            <Badge tone={normalizeQuoteAmount(item.amount) > 0 ? 'green' : 'amber'}>{title}</Badge>
+          </summary>
+          <div className="quote-item">
+            <input aria-label={`${title} concepto`} value={item.name} onChange={(event) => onChange(item.id, 'name', event.target.value)} />
+            <input aria-label={`${title} monto`} type="number" min="0" value={item.amount} onChange={(event) => onChange(item.id, 'amount', event.target.value)} />
+            {onRemove && (
+              <button className="tiny-button danger-text" type="button" onClick={() => onRemove(item.id)} aria-label={`Eliminar ${item.name || title}`}>
+                <Trash2 size={14} />
+                Quitar
+              </button>
+            )}
+          </div>
+        </details>
       ))}
     </div>
   );

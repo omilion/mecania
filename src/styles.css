@@ -473,6 +473,69 @@ label {
   background: var(--panel-soft);
 }
 
+details.subcard {
+  padding: 0;
+  overflow: hidden;
+}
+
+.part-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 58px;
+  padding: 14px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.part-summary::-webkit-details-marker {
+  display: none;
+}
+
+.part-summary strong,
+.part-summary span {
+  display: block;
+}
+
+.part-summary span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.part-editor {
+  display: grid;
+  gap: 12px;
+  padding: 0 14px 14px;
+}
+
+.client-editor-disclosure {
+  margin-top: 8px;
+}
+
+.client-editor-disclosure summary {
+  width: fit-content;
+  min-height: 32px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  color: var(--primary-dark);
+  font-size: 13px;
+  font-weight: 850;
+  cursor: pointer;
+  list-style: none;
+}
+
+.client-editor-disclosure summary::-webkit-details-marker {
+  display: none;
+}
+
+.client-editor {
+  margin-top: 10px;
+}
+
 .part-sheet-box {
   display: grid;
   gap: 8px;
@@ -748,6 +811,34 @@ button:disabled {
   box-shadow: var(--shadow);
 }
 
+.focus-topbar {
+  position: sticky;
+  top: 16px;
+  z-index: 18;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+  box-shadow: var(--shadow);
+}
+
+.focus-topbar h2 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  line-height: 1.15;
+}
+
+.focus-topbar span {
+  display: block;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 800;
+}
+
 .job-card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -896,7 +987,8 @@ button:disabled {
 }
 
 .assignment-disclosure > summary {
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, auto) minmax(0, 1fr) auto;
   align-items: center;
   gap: 10px;
   min-height: 44px;
@@ -912,6 +1004,24 @@ button:disabled {
 
 .assignment-disclosure > summary > span {
   font-weight: 850;
+  white-space: nowrap;
+}
+
+.assignment-disclosure > summary em {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.assignment-disclosure > summary small {
+  justify-self: end;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .assignment-disclosure .assignment-panel {
@@ -931,6 +1041,34 @@ button:disabled {
   color: var(--muted);
   font-size: 12px;
   line-height: 1.35;
+}
+
+.readonly-field {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.readonly-field span {
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.readonly-field strong {
+  min-height: 42px;
+  padding: 11px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f4f7f9;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.35;
+}
+
+.readonly-field.multiline strong {
+  min-height: 84px;
+  white-space: pre-wrap;
 }
 
 .assignment-grid {
@@ -1035,14 +1173,15 @@ button:disabled {
 }
 
 .workflow-nav {
-  position: fixed;
-  right: 24px;
+  position: sticky;
   bottom: 18px;
-  z-index: 40;
+  z-index: 30;
   display: flex;
   align-items: center;
   justify-content: flex-end;
   gap: 8px;
+  width: fit-content;
+  margin: 0 0 0 auto;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -1303,6 +1442,17 @@ button:disabled {
   gap: 10px;
 }
 
+.quote-item-card {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fff;
+}
+
+.quote-item-card .quote-item {
+  padding: 0 12px 12px;
+}
+
 .quote-total {
   display: flex;
   align-items: center;
@@ -1404,6 +1554,30 @@ button:disabled {
   padding: 24px;
 }
 
+.client-portal-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 0.8fr) auto;
+  align-items: center;
+  gap: 14px;
+}
+
+.client-portal-hero h1 {
+  margin-bottom: 6px;
+  font-size: clamp(28px, 5vw, 44px);
+}
+
+.client-portal-hero > div > span {
+  display: inline-flex;
+  min-height: 28px;
+  align-items: center;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: var(--blue-bg);
+  color: var(--primary-dark);
+  font-size: 12px;
+  font-weight: 850;
+}
+
 @media (max-width: 1020px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -1490,8 +1664,12 @@ button:disabled {
   }
 
   .nav {
-    grid-template-columns: repeat(5, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 4px;
+  }
+
+  .nav-item.nav-history {
+    display: none;
   }
 
   .nav-item {
@@ -1586,9 +1764,13 @@ button:disabled {
   }
 
   .workflow-nav {
-    position: sticky;
+    position: fixed;
+    right: 14px;
+    left: 14px;
     bottom: 12px;
     z-index: 25;
+    width: auto;
+    margin: 0;
     padding: 10px;
   }
 
@@ -1605,6 +1787,23 @@ button:disabled {
   .first-visit-topbar {
     top: 8px;
     padding: 12px;
+  }
+
+  .focus-topbar {
+    top: 8px;
+    display: grid;
+    gap: 10px;
+    padding: 12px;
+  }
+
+  .focus-topbar h2 {
+    font-size: 18px;
+  }
+
+  .focus-topbar .button-row {
+    display: grid;
+    grid-template-columns: 0.8fr 1.2fr;
+    width: 100%;
   }
 
   .first-visit-topbar h2 {
@@ -1633,13 +1832,13 @@ button:disabled {
   }
 
   .segmented {
-    overflow-x: auto;
-    flex-wrap: nowrap;
+    overflow-x: visible;
+    flex-wrap: wrap;
     padding-bottom: 2px;
   }
 
   .segmented button {
-    min-width: max-content;
+    min-width: 0;
   }
 
   .job-card-grid {
@@ -1661,6 +1860,11 @@ button:disabled {
   .summary-card {
     min-height: 116px;
     padding: 12px;
+  }
+
+  .visit-cta {
+    grid-column: 1 / -1;
+    min-height: 96px;
   }
 
   .summary-card strong {
@@ -1704,12 +1908,33 @@ button:disabled {
     align-items: center;
   }
 
+  .quote-total {
+    position: sticky;
+    bottom: 94px;
+    z-index: 22;
+    margin-right: -4px;
+    margin-left: -4px;
+  }
+
+  .quote-item {
+    grid-template-columns: 1fr;
+  }
+
   textarea {
     min-height: 120px;
   }
 
   .client-portal {
     padding: 14px;
+  }
+
+  .client-portal-hero {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+
+  .client-portal-hero .secondary-button {
+    width: 100%;
   }
 
   .auth-shell {

@@ -15,3 +15,4 @@ tmp-epa/
 server/data/*.json
 server/data/*.tmp
 server/uploads/
+.ux-captures/
